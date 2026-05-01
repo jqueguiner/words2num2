@@ -226,7 +226,7 @@ The locale defaults table covers 50+ locales: English/CJK use comma
 thousands and period decimal; French uses non-breaking-space + comma;
 Swiss French uses apostrophe + period; German/Spanish/Italian/Portuguese/
 Dutch/Romanian use period + comma; Russian/Scandinavian/Slavic use space
-+ comma. See :file:`words2num2/formats.py` for the full table.
++ comma. See `words2num2/formats.py` for the full table.
 
 Auto-detection heuristic (when no override and no locale match):
 
@@ -306,7 +306,7 @@ Function / class                   Purpose
 ``Words2NumError``                 Raised when input cannot be parsed.
 ================================== =================================================
 
-See :file:`REFERENCE.md` for the full API reference with parameters,
+See `REFERENCE.md` for the full API reference with parameters,
 return types, and examples.
 
 Development
@@ -343,9 +343,9 @@ via ``gh workflow run`` and uses ``PYPI_API_TOKEN`` /
 Changelog
 ---------
 
-See :file:`CHANGELOG.md`.
+See `CHANGELOG.md`.
 
 License
 -------
 
-LGPL-2.1, mirroring ``num2words2``. See :file:`COPYING`.
+LGPL-2.1, mirroring ``num2words2``. See `COPYING`.
