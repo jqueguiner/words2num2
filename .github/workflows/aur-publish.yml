@@ -36,13 +36,13 @@ jobs:
         run: |
           VER="${{ steps.ver.outputs.version }}"
           for i in $(seq 1 60); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            CODE=$(curl -sL -o /dev/null -w "%{http_code}" \
               "https://files.pythonhosted.org/packages/source/w/words2num2/words2num2-${VER}.tar.gz")
             if [ "$CODE" = "200" ]; then
               echo "PyPI sdist for $VER is live."
               break
             fi
-            echo "Waiting for PyPI sdist... ($i/60)"
+            echo "Waiting for PyPI sdist... ($i/60) (got $CODE)"
             sleep 10
           done
 
