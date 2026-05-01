@@ -4,6 +4,18 @@ All notable changes to `words2num2` are documented here. This project
 follows [Semantic Versioning](https://semver.org/) and uses
 [Keep a Changelog](https://keepachangelog.com/) style.
 
+## [0.2.3] — 2026-05-02
+
+### Fixed
+- `aur-publish.yml` workflow now follows HTTP redirects when polling
+  for the freshly-published PyPI sdist. Without `curl -L` the legacy
+  `files.pythonhosted.org` URL returns a 302 and the wait loop never
+  satisfied, so the AUR job timed out before computing the sha256.
+
+### Verified
+- End-to-end release pipeline: tag push → build → test → GitHub
+  Release → PyPI Trusted Publishing → AUR push, all green.
+
 ## [0.2.2] — 2026-05-01
 
 ### Changed
@@ -132,6 +144,7 @@ follows [Semantic Versioning](https://semver.org/) and uses
 - `Words2NumError` exception type.
 - 59 tests.
 
+[0.2.3]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.1
 [0.2.0]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.0
