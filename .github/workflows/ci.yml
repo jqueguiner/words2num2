@@ -6,8 +6,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: [3.8, 3.9, '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14', '3.15']
 
     steps:
     - uses: actions/checkout@v4
@@ -18,6 +19,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        allow-prereleases: true
 
     - name: Install dependencies
       run: |
@@ -30,14 +32,14 @@ jobs:
         pytest tests/ -v --cov=words2num2 --cov-report=term-missing
 
     - name: Build package
-      if: matrix.python-version == '3.11'
+      if: matrix.python-version == '3.13'
       run: |
         pip install build
         python -m build
         ls -la dist/
 
     - name: Upload build artifacts
-      if: matrix.python-version == '3.11'
+      if: matrix.python-version == '3.13'
       uses: actions/upload-artifact@v4
       with:
         name: python-package-distributions
