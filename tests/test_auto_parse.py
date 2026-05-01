@@ -171,6 +171,53 @@ def test_sentence_percent_no_space():
     assert "70%" in out
 
 
+@pytest.mark.parametrize(
+    "value,singular,expected",
+    [
+        (1, "dollar", "dollar"),
+        (0, "dollar", "dollars"),
+        (5, "dollar", "dollars"),
+        (1.5, "dollar", "dollars"),
+        (-1, "dollar", "dollar"),
+        (-5, "dollar", "dollars"),
+        (5, "foot", "feet"),
+        (1, "foot", "foot"),
+        (5, "inch", "inches"),
+        (1, "inch", "inch"),
+        (5, "kilogram", "kilograms"),
+        (5, "yen", "yen"),
+        (1, "yen", "yen"),
+        (5, "yuan", "yuan"),
+        (5, "won", "won"),
+        (5, "kelvin", "kelvin"),
+        (5, "percent", "percent"),
+        (5, "degree celsius", "degrees celsius"),
+        (5, "pound sterling", "pounds sterling"),
+        (5, "Swiss franc", "Swiss francs"),
+    ],
+)
+def test_pluralize(value, singular, expected):
+    from words2num2.converters.auto import pluralize
+    assert pluralize(singular, value) == expected
+
+
+def test_sentence_expand_pluralizes():
+    out = auto_parse_sentence("Pay $12.50 for 5kg.", expand=True)
+    assert "dollars" in out
+    assert "kilograms" in out
+
+    out = auto_parse_sentence("Pay $1.00 for 1kg.", expand=True)
+    assert "dollar" in out and "dollars" not in out
+    assert "kilogram" in out and "kilograms" not in out
+
+    out = auto_parse_sentence("5 ft and 1 ft.", expand=True)
+    assert "5 feet" in out
+    assert "1 foot" in out
+
+    out = auto_parse_sentence("Pay 100 yen.", expand=True)
+    assert "100 yen" in out
+
+
 def test_sentence_expand_mode():
     out = auto_parse_sentence("Pay $12.50 for 5kg.", expand=True)
     assert "dollar" in out

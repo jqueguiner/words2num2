@@ -523,14 +523,64 @@ def _resolve_unit(unit_str, prefer):
 def _format_quantity(q, expand):
     if q.unit is None:
         return _format_number(q.value)
-    label = q.unit_long if expand else q.unit
-    # Tight glue for percent and bare degree; space-separated otherwise.
-    if not expand and q.unit in ("%", "°"):
-        return "{}{}".format(_format_number(q.value), label)
-    return "{} {}".format(_format_number(q.value), label)
+    if expand:
+        label = pluralize(q.unit_long, q.value)
+        return "{} {}".format(_format_number(q.value), label)
+    # Short form: tight glue for percent and bare degree.
+    if q.unit in ("%", "°"):
+        return "{}{}".format(_format_number(q.value), q.unit)
+    return "{} {}".format(_format_number(q.value), q.unit)
 
 
 def _format_number(value):
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value)
+
+
+# ---------------------------------------------------------------------------
+# Pluralization (English long-form units)
+# ---------------------------------------------------------------------------
+
+
+# Irregular plurals that the regular -s/-es rule wouldn't get right.
+_IRREGULAR_PLURALS = {
+    "foot": "feet",
+    "inch": "inches",
+    "pound sterling": "pounds sterling",
+    "degree celsius": "degrees celsius",
+    "degree fahrenheit": "degrees fahrenheit",
+    "Swiss franc": "Swiss francs",
+    "Canadian dollar": "Canadian dollars",
+    "Australian dollar": "Australian dollars",
+    "Mexican peso": "Mexican pesos",
+    "US dollar": "US dollars",
+}
+
+# Uncountable / no-plural English unit names.
+_UNCOUNTABLE = {
+    "yen", "yuan", "won", "kelvin", "percent",
+}
+
+
+def pluralize(long_form, value):
+    """Return ``long_form`` pluralized for ``value``.
+
+    English rules: singular for value == ±1, plural otherwise. Honors
+    irregular forms (foot→feet, inch→inches, "pound sterling"→"pounds
+    sterling") and uncountable units (yen, yuan, won, kelvin, percent).
+    """
+    if long_form is None:
+        return long_form
+    if value in (1, -1, 1.0, -1.0):
+        return long_form
+    if long_form in _UNCOUNTABLE:
+        return long_form
+    if long_form in _IRREGULAR_PLURALS:
+        return _IRREGULAR_PLURALS[long_form]
+    # Regular English plurals.
+    if long_form.endswith(("s", "x", "z", "ch", "sh")):
+        return long_form + "es"
+    if long_form.endswith("y") and len(long_form) >= 2 and long_form[-2] not in "aeiou":
+        return long_form[:-1] + "ies"
+    return long_form + "s"
