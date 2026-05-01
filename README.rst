@@ -3,15 +3,59 @@ words2num2 — words to numbers
 
 .. image:: https://img.shields.io/pypi/v/words2num2.svg
    :target: https://pypi.python.org/pypi/words2num2
+   :alt: PyPI version
 
 .. image:: https://img.shields.io/pypi/pyversions/words2num2.svg
    :target: https://pypi.python.org/pypi/words2num2
+   :alt: Python versions
+
+.. image:: https://img.shields.io/pypi/dm/words2num2.svg
+   :target: https://pypi.python.org/pypi/words2num2
+   :alt: Downloads / month
+
+.. image:: https://img.shields.io/pypi/status/words2num2.svg
+   :target: https://pypi.python.org/pypi/words2num2
+   :alt: Package status
+
+.. image:: https://img.shields.io/aur/version/python-words2num2.svg
+   :target: https://aur.archlinux.org/packages/python-words2num2
+   :alt: AUR version
 
 .. image:: https://github.com/jqueguiner/words2num2/workflows/CI/badge.svg
-   :target: https://github.com/jqueguiner/words2num2/actions
+   :target: https://github.com/jqueguiner/words2num2/actions/workflows/ci.yml
+   :alt: CI
+
+.. image:: https://github.com/jqueguiner/words2num2/workflows/Lint/badge.svg
+   :target: https://github.com/jqueguiner/words2num2/actions/workflows/lint.yml
+   :alt: Lint
+
+.. image:: https://github.com/jqueguiner/words2num2/workflows/CodeQL/badge.svg
+   :target: https://github.com/jqueguiner/words2num2/actions/workflows/codeql-analysis.yml
+   :alt: CodeQL
+
+.. image:: https://github.com/jqueguiner/words2num2/workflows/E2E%20Tests/badge.svg
+   :target: https://github.com/jqueguiner/words2num2/actions/workflows/e2e-tests.yml
+   :alt: E2E Tests
+
+.. image:: https://coveralls.io/repos/github/jqueguiner/words2num2/badge.svg?branch=main
+   :target: https://coveralls.io/github/jqueguiner/words2num2?branch=main
+   :alt: Coverage
+
+.. image:: https://img.shields.io/github/v/release/jqueguiner/words2num2.svg
+   :target: https://github.com/jqueguiner/words2num2/releases
+   :alt: Latest release
+
+.. image:: https://img.shields.io/github/last-commit/jqueguiner/words2num2.svg
+   :target: https://github.com/jqueguiner/words2num2/commits/main
+   :alt: Last commit
+
+.. image:: https://img.shields.io/github/issues/jqueguiner/words2num2.svg
+   :target: https://github.com/jqueguiner/words2num2/issues
+   :alt: Issues
 
 .. image:: https://img.shields.io/badge/license-LGPL--2.1-blue.svg
    :target: https://github.com/jqueguiner/words2num2/blob/main/COPYING
+   :alt: License
 
 The inverse of `num2words2 <https://github.com/jqueguiner/num2words2>`_.
 
@@ -51,11 +95,24 @@ the forward direction. ``words2num2``:
 Installation
 ------------
 
-The easiest way to install ``words2num2`` is to use pip::
+**pip**::
 
     pip install words2num2
 
-Otherwise, clone the source and install::
+**Arch Linux / Manjaro (AUR):**
+
+.. code-block:: bash
+
+    # With an AUR helper
+    yay -S python-words2num2
+    paru -S python-words2num2
+
+    # Or manually
+    git clone https://aur.archlinux.org/python-words2num2.git
+    cd python-words2num2
+    makepkg -si
+
+**From source**::
 
     git clone https://github.com/jqueguiner/words2num2
     cd words2num2

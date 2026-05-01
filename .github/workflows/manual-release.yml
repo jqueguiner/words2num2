@@ -1,0 +1,81 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 0.3.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Pre-release?'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build setuptools wheel setuptools_scm pytest pytest-cov twine
+        pip install -e .
+
+    - name: Run tests
+      run: pytest tests/ -v --tb=short
+
+    - name: Create and push tag
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+        git push origin "v${{ inputs.version }}"
+
+    - name: Build distribution
+      env:
+        SETUPTOOLS_SCM_PRETEND_VERSION: ${{ inputs.version }}
+      run: |
+        python -m build
+        ls -la dist/
+        twine check dist/*
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ inputs.version }}
+        name: Release v${{ inputs.version }}
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+        files: dist/*
+        generate_release_notes: true
+        body: |
+          ## words2num2 v${{ inputs.version }}
+
+          ### Installation
+          ```bash
+          pip install words2num2==${{ inputs.version }}
+          ```
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          for the full list of changes.
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/

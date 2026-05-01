@@ -1,0 +1,104 @@
+# Auto-publish to the AUR (Arch User Repository) when a new tag lands on PyPI.
+# Triggers on tag push to v* OR via workflow_dispatch.
+#
+# Requires repo secret AUR_SSH_PRIVATE_KEY (the private key whose public
+# half is registered on the maintainer's AUR account).
+name: Publish AUR package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to push to AUR (e.g., 0.2.2)'
+        required: true
+        type: string
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            TAG="${GITHUB_REF#refs/tags/v}"
+            echo "version=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for PyPI sdist to be live
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          for i in $(seq 1 60); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://files.pythonhosted.org/packages/source/w/words2num2/words2num2-${VER}.tar.gz")
+            if [ "$CODE" = "200" ]; then
+              echo "PyPI sdist for $VER is live."
+              break
+            fi
+            echo "Waiting for PyPI sdist... ($i/60)"
+            sleep 10
+          done
+
+      - name: Compute sha256 of PyPI sdist
+        id: sha
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          SHA=$(curl -sL "https://files.pythonhosted.org/packages/source/w/words2num2/words2num2-${VER}.tar.gz" | sha256sum | awk '{print $1}')
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "sha256: $SHA"
+
+      - name: Update PKGBUILD + .SRCINFO
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha }}"
+          cd packaging/aur/python-words2num2
+          sed -i -E "s/^pkgver=.*/pkgver=${VER}/" PKGBUILD
+          sed -i -E "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i -E "s/^sha256sums=\(.*\)/sha256sums=('${SHA}')/" PKGBUILD
+          # Regenerate .SRCINFO from the patched PKGBUILD.
+          # Use a docker container that has makepkg available.
+          docker run --rm -v "$PWD":/pkg -w /pkg archlinux:base-devel \
+            bash -lc "useradd -m b && chown -R b:b /pkg && su b -c 'makepkg --printsrcinfo > .SRCINFO'"
+          cat PKGBUILD
+          echo "---"
+          cat .SRCINFO
+
+      - name: Push to AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::warning::AUR_SSH_PRIVATE_KEY secret not set; skipping push."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+
+          VER="${{ steps.ver.outputs.version }}"
+          git clone ssh://aur@aur.archlinux.org/python-words2num2.git /tmp/aur || true
+          cp packaging/aur/python-words2num2/PKGBUILD /tmp/aur/
+          cp packaging/aur/python-words2num2/.SRCINFO /tmp/aur/
+          cd /tmp/aur
+          git config user.email "jlqueguiner@gladia.io"
+          git config user.name "Jean-Louis Queguiner"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "No AUR changes."
+            exit 0
+          fi
+          git commit -m "Bump to ${VER}"
+          git push origin master

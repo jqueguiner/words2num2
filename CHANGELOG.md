@@ -4,6 +4,49 @@ All notable changes to `words2num2` are documented here. This project
 follows [Semantic Versioning](https://semver.org/) and uses
 [Keep a Changelog](https://keepachangelog.com/) style.
 
+## [0.2.2] — 2026-05-01
+
+### Changed
+- **Bumped minimum Python to 3.10.** `requires-python = ">=3.10"`.
+  Python 3.8 and 3.9 are no longer supported.
+- CI matrix now runs on Python 3.10, 3.11, 3.12, 3.13, 3.14, and 3.15
+  (with `allow-prereleases: true` so 3.15 alpha is exercised). The
+  `Build and Release` and `Publish to PyPI (manual)` workflows use
+  Python 3.13.
+- Trove classifiers in `pyproject.toml` and `setup.py` updated to
+  reflect 3.10–3.15.
+
+### Added
+- Comprehensive documentation:
+  - `REFERENCE.md` — full API reference with parameters, return types,
+    examples for every public symbol.
+  - `LOCAL_TESTING.md` — repo setup, test invocations, smoke-test
+    recipe, release pre-flight, troubleshooting.
+  - Expanded `CONTRIBUTING.md` — where-to-look table, hand-written
+    parser guide, adding units/currencies, release checklist.
+  - Updated `README.rst` with full feature tour, badges, configurable
+    number formats, and the auto-parse mode.
+- **Arch Linux / AUR package** — `packaging/aur/python-words2num2/`
+  with `PKGBUILD`, `.SRCINFO`, and a maintenance README. Installable
+  via `yay -S python-words2num2` (after first AUR push).
+- **Eight additional GitHub Actions workflows mirroring num2words2:**
+  - `codeql-analysis.yml` — weekly Python security scan.
+  - `e2e-tests.yml` — full pytest run on Linux/macOS/Windows × Python
+    3.10–3.14 (+ PyPy 3.10).
+  - `scheduled-test.yml` — nightly cross-platform test matrix.
+  - `pr-size.yml` — auto-labels PRs `size/XS`–`size/XXL`.
+  - `manual-release.yml` — `workflow_dispatch` to cut a release
+    without touching git locally.
+  - `manual-publish.yml` — `workflow_dispatch` PyPI publish (TestPyPI
+    optional) using `PYPI_API_TOKEN` secret.
+  - `python-publish.yml` — auto-publish on CI success when the
+    detected version isn't already on PyPI.
+  - `aur-publish.yml` — pushes the matching `PKGBUILD` to the AUR on
+    new tags. Needs `AUR_SSH_PRIVATE_KEY` repo secret.
+- Expanded README badges: PyPI version, Python versions, downloads,
+  status, AUR version, CI, Lint, CodeQL, E2E Tests, Coveralls coverage,
+  latest release, last commit, issues, license.
+
 ## [0.2.1] — 2026-05-01
 
 ### Added
@@ -89,6 +132,7 @@ follows [Semantic Versioning](https://semver.org/) and uses
 - `Words2NumError` exception type.
 - 59 tests.
 
+[0.2.2]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.2
 [0.2.1]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.1
 [0.2.0]: https://github.com/jqueguiner/words2num2/releases/tag/v0.2.0
 [0.1.1]: https://github.com/jqueguiner/words2num2/releases/tag/v0.1.1
