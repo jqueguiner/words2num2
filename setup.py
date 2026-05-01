@@ -52,7 +52,7 @@ setup(
     ),
     url="https://github.com/jqueguiner/words2num2",
     packages=find_packages(exclude=["tests"]),
-    install_requires=["docopt>=0.6.2", "num2words2>=0.1.0"],
+    install_requires=["docopt>=0.6.2", "num2words2>=0.1.0.dev0"],
     classifiers=CLASSIFIERS,
     scripts=["bin/words2num2"],
 )

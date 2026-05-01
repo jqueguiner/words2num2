@@ -8,7 +8,7 @@ dynamic = ["version", "license"]
 description = "Inverse of num2words2: convert spoken-form numbers back to numeric values across 100+ languages."
 readme = "README.rst"
 requires-python = ">=3.8"
-dependencies = ["docopt>=0.6.2", "num2words2>=0.1.0"]
+dependencies = ["docopt>=0.6.2", "num2words2>=0.1.0.dev0"]
 authors = [
     {name = "Jean-Louis Queguiner", email = "jlqueguiner@gladia.io"}
 ]
