@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "words2num2"
+dynamic = ["version", "license"]
+description = "Inverse of num2words2: convert spoken-form numbers back to numeric values across 100+ languages."
+readme = "README.rst"
+requires-python = ">=3.8"
+dependencies = ["docopt>=0.6.2", "num2words2>=0.1.0"]
+authors = [
+    {name = "Jean-Louis Queguiner", email = "jlqueguiner@gladia.io"}
+]
+maintainers = [
+    {name = "Jean-Louis Queguiner", email = "jlqueguiner@gladia.io"}
+]
+keywords = ["number", "word", "numbers", "words", "parse", "parser", "convert", "conversion",
+            "i18n", "localisation", "localization", "internationalisation",
+            "internationalization", "asr", "speech", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Internationalization",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Localization",
+    "Topic :: Text Processing :: Linguistic",
+]
+
+[project.urls]
+Homepage = "https://github.com/jqueguiner/words2num2"
+Repository = "https://github.com/jqueguiner/words2num2.git"
+"Bug Tracker" = "https://github.com/jqueguiner/words2num2/issues"
+
+[project.scripts]
+words2num2 = "words2num2.__main__:main"
+
+[tool.setuptools]
+packages = ["words2num2", "words2num2.converters"]
+
+[tool.setuptools.package-data]
+words2num2 = ["*.py"]
+
+[tool.setuptools_scm]
+write_to = "words2num2/_version.py"
+version_scheme = "release-branch-semver"
+local_scheme = "no-local-version"
+write_to_template = '''# Auto-generated version file
+__version__ = "{version}"
+__version_tuple__ = {version_tuple}
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = ["words2num2/_version.py"]
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | words2num2/_version.py
+)/
+'''

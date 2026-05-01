@@ -1,0 +1,5 @@
+include COPYING
+include README.rst
+include CONTRIBUTING.md
+recursive-include words2num2 *.py
+recursive-include tests *.py

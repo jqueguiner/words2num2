@@ -1,0 +1,28 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""words2num2
+
+Usage:
+  words2num2 <text> [--lang=<lang>] [--to=<to>]
+  words2num2 (-h | --help)
+  words2num2 --version
+
+Options:
+  -h --help        Show this screen.
+  --version        Show version.
+  --lang=<lang>    Language code [default: en].
+  --to=<to>        Conversion type: cardinal, ordinal, year [default: cardinal].
+"""
+from docopt import docopt
+
+from words2num2 import __version__, words2num
+
+
+def main():
+    args = docopt(__doc__, version="words2num2 {}".format(__version__))
+    result = words2num(args["<text>"], lang=args["--lang"], to=args["--to"])
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
