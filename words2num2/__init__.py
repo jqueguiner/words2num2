@@ -143,6 +143,14 @@ from . import (
     lang_ZH_TW,
 )
 from .base import Words2NumError
+from .converters.auto import (
+    CURRENCIES,
+    Quantity,
+    UNITS,
+    auto_parse,
+    auto_parse_sentence,
+)
+from .formats import NUMBER_FORMAT_DEFAULTS, parse_number_string
 
 try:
     from ._version import __version__, __version_tuple__
@@ -153,6 +161,13 @@ except ImportError:
 __all__ = [
     "words2num",
     "words2num_sentence",
+    "auto_parse",
+    "auto_parse_sentence",
+    "Quantity",
+    "UNITS",
+    "CURRENCIES",
+    "parse_number_string",
+    "NUMBER_FORMAT_DEFAULTS",
     "convert_sentence",
     "sentence_to_words",
     "Words2NumError",

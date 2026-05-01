@@ -57,6 +57,48 @@ Usage
     >>> words2num_sentence("I bought twenty-three apples and fourteen pears.")
     'I bought 23 apples and 14 pears.'
 
+Auto-parse: numbers + currencies + units + locales
+--------------------------------------------------
+
+``auto_parse`` extracts a numeric value plus its unit from any free-text
+expression. ``auto_parse_sentence`` walks running text and replaces every
+quantity in place. Supports configurable thousands/decimal separators
+per locale, currency symbols (``$€£¥₹₽₩₺``) and ISO codes
+(``USD``, ``EUR``, ``GBP``, ...), scale shortcuts (``$5m``, ``$1.5b``),
+SI/imperial units (length/mass/temperature/time/volume), percent, and
+disambiguation hints.
+
+.. code-block:: python
+
+    >>> from words2num2 import auto_parse, auto_parse_sentence
+
+    >>> auto_parse("$12,345.00")
+    Quantity(value=12345.0, unit='USD', kind='currency', confidence=1.0)
+    >>> auto_parse("$5m").value
+    5000000
+    >>> auto_parse("5cm")
+    Quantity(value=5, unit='cm', kind='length', confidence=1.0)
+    >>> auto_parse("20°C").kind
+    'temperature'
+    >>> auto_parse("forty-two kg").value
+    42
+
+    # Configurable separators
+    >>> auto_parse("1.234,56", lang="de").value
+    1234.56
+    >>> auto_parse("1 234,56", lang="fr").value
+    1234.56
+
+    # Disambiguation
+    >>> auto_parse("5m", prefer={"m": "mile"}).unit_long
+    'mile'
+
+    # Sentence mode
+    >>> auto_parse_sentence("Pay $12.50 for 5kg of apples at -5°C.")
+    'Pay 12.5 USD for 5 kg of apples at -5 °C.'
+    >>> auto_parse_sentence("Pay $12.50 for 5kg.", expand=True)
+    'Pay 12.5 dollar for 5 kilogram.'
+
 Command-line
 ------------
 
