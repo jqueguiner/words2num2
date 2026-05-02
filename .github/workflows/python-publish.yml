@@ -1,5 +1,5 @@
 # Auto-publish hook: when CI succeeds on main, build the package and
-# publish to PyPI ONLY if the version isn't already there. Tag-based
+# publish to PyPI, skipping versions that are already present. Tag-based
 # releases via release.yml are still the primary path; this workflow is
 # a safety net for one-off pushes that bumped the version without a tag.
 name: Upload Python Package
@@ -58,4 +58,4 @@ jobs:
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: twine upload dist/* --verbose
+      run: twine upload --skip-existing dist/* --verbose
