@@ -51,6 +51,11 @@ setup(
         "asr speech llm"
     ),
     url="https://github.com/jqueguiner/words2num2",
+    project_urls={
+        "Documentation": "https://github.com/jqueguiner/words2num2/wiki",
+        "Repository": "https://github.com/jqueguiner/words2num2.git",
+        "Bug Tracker": "https://github.com/jqueguiner/words2num2/issues",
+    },
     packages=find_packages(exclude=["tests"]),
     install_requires=["docopt>=0.6.2", "num2words2>=0.1.0.dev0"],
     classifiers=CLASSIFIERS,

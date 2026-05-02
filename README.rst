@@ -66,9 +66,11 @@ entries**) and adds a free-text *auto-parse* mode that handles
 currencies, units, configurable thousands/decimal separators, and
 ASR/LLM-style mixed text.
 
-The project is hosted on GitHub_. Contributions are welcome.
+The project is hosted on GitHub_, and the full documentation is available
+in the Wiki_. Contributions are welcome.
 
 .. _GitHub: https://github.com/jqueguiner/words2num2
+.. _Wiki: https://github.com/jqueguiner/words2num2/wiki
 
 Why this library
 ----------------
@@ -264,6 +266,13 @@ entries** including:
   wo, yi, yo, zh, zh_CN, zh_HK, zh_TW
 
 Aliases: ``jp`` → ``ja``, ``cn`` → ``zh_CN``.
+
+Wiki
+----
+For the full documentation, including installation, API details, CLI
+usage, supported locales, sentence conversion, auto-parse behavior, and
+migration guidance, please check the Wiki_. Feel free to propose wiki
+enhancements.
 
 Conversion types
 ~~~~~~~~~~~~~~~~

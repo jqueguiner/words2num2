@@ -36,6 +36,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/jqueguiner/words2num2"
+Documentation = "https://github.com/jqueguiner/words2num2/wiki"
 Repository = "https://github.com/jqueguiner/words2num2.git"
 "Bug Tracker" = "https://github.com/jqueguiner/words2num2/issues"
 
