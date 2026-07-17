@@ -80,6 +80,7 @@ in the Wiki_. Contributions are welcome.
 
 .. _GitHub: https://github.com/jqueguiner/words2num2
 .. _Wiki: https://github.com/jqueguiner/words2num2/wiki
+.. _GitHub Releases: https://github.com/jqueguiner/words2num2/releases
 
 Why this library
 ----------------
@@ -138,9 +139,23 @@ the former pure-Python implementation, validated against a frozen corpus of
 Installation
 ------------
 
-**pip**::
+**pip** (Python 3.10+)::
 
     pip install words2num2
+
+That's it — the wheel bundles the Python binder and the compiled Rust
+extension, and ``words2num2`` has **no runtime dependencies** (the num2words2
+conversion engine is compiled in, so you do *not* need the num2words2 package).
+
+Prebuilt wheels are published for:
+
+* **Linux** — x86_64 and aarch64 (manylinux2014)
+* **macOS** — Apple Silicon (arm64); Intel (x86_64) from a later release
+* **Windows** — x86_64
+
+On any other platform (or an older release without a matching wheel), pip
+falls back to the source distribution and builds the extension locally — this
+needs a **stable Rust toolchain** (`rustup <https://rustup.rs>`_); nothing else.
 
 **Arch Linux / Manjaro (AUR):**
 
@@ -163,10 +178,7 @@ Installation
     pip install -e .          # builds the Rust extension via maturin
     # or, to produce a wheel:  maturin build --release
 
-``words2num2`` is self-contained: the num2words2 conversion engine is compiled
-into the extension, so there is **no runtime dependency** on the num2words2
-package (or anything else). Wheels on PyPI are prebuilt per platform, so a
-plain ``pip install words2num2`` needs no Rust toolchain.
+Wheels for every version are also attached to the `GitHub Releases`_ page.
 
 Quickstart
 ----------
