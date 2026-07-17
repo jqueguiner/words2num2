@@ -984,17 +984,11 @@ impl W2nLangEn {
 
 /// `Words2Num_Base._normalize`.
 ///
-/// Already ported in `lib.rs` and reused rather than duplicated:
-/// `normalize_py` delegates the NFKD decomposition and combining-mark strip
-/// to Python's own `unicodedata` (so the two sides cannot disagree about
-/// Unicode), then applies `normalize_tail`. Both are private to the crate
-/// root, which makes them visible to this child module.
-///
-/// The GIL round-trip is free in practice: this crate is a `cdylib` Python
-/// extension, so an interpreter is always attached. The fallback exists only
-/// so a failure cannot panic under `panic = "abort"` — it skips the NFKD
-/// step, which matters solely for accented input ("fórty" -> "forty").
+/// Ported in `lib.rs` and reused rather than duplicated: [`crate::normalize`]
+/// does the NFKD decomposition + combining-mark strip (via the
+/// `unicode-normalization` crate, matching Python's `unicodedata`) and then
+/// applies `normalize_tail`. This makes "trente-deux" match "trente deux" and
+/// "fórty" -> "forty".
 fn normalize(text: &str) -> String {
-    pyo3::Python::with_gil(|py| crate::normalize_py(py, text))
-        .unwrap_or_else(|_| crate::normalize_tail(text))
+    crate::normalize(text)
 }

@@ -1,0 +1,18 @@
+[package]
+name = "words2num2-core"
+version.workspace = true
+edition.workspace = true
+description = "Pure-Rust core for words2num2 — parse spoken-form numbers back to numeric values across 100+ locales (the inverse of num2words2). No Python."
+license.workspace = true
+repository.workspace = true
+keywords = ["number", "words", "parse", "i18n", "nlp"]
+categories = ["parser-implementations", "internationalization", "text-processing"]
+
+[dependencies]
+# Published on crates.io; supplies the num2words2 rendering used to build the
+# reverse lookup tables.
+num2words2-core = "0.1"
+num-bigint = "0.4"
+bigdecimal = "0.4"
+# NFKD normalisation + combining-mark detection, matching Python's unicodedata.
+unicode-normalization = "0.1"

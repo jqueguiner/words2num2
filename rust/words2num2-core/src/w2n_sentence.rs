@@ -1,16 +1,15 @@
 //! Port of the words2num2 **sentence-level API**.
 //!
 //! Sources (the specification — bugs included):
-//!   * `words2num2/__init__.py`            — `_resolve_lang`, `words2num_sentence`,
-//!                                           `convert_sentence`, `sentence_to_words`
-//!   * `words2num2/converters/sentence.py` — `SentenceConverter`
-//!   * `words2num2/converters/auto.py`     — `UNITS`, `CURRENCIES`, `Quantity`,
-//!                                           `auto_parse`, `auto_parse_sentence`
+//! - `words2num2/__init__.py`: `_resolve_lang`, `words2num_sentence`, `convert_sentence`, `sentence_to_words`
+//! - `words2num2/converters/sentence.py`: `SentenceConverter`
+//! - `words2num2/converters/auto.py`: `UNITS`, `CURRENCIES`, `Quantity`, `auto_parse`, `auto_parse_sentence`
 //!
-//! `words2num()` itself deliberately stays in Python; everything here that
-//! needs it (or needs a per-language `Words2Num_*` converter) calls back into
-//! the interpreter, exactly as the Python code does via its own lazy
-//! `from .. import ...`.
+//! Every per-language `Words2Num_*` converter is dispatched **in Rust** by the
+//! [`Converter`] abstraction below: `en` uses the hand-written grammar
+//! ([`crate::w2n_lang_en`]); every other locale uses the generic reverse-table
+//! lookup ([`crate::lookup`]) plus the `_parse_literal` tail — exactly what
+//! `Words2Num_Base` does in Python, but without leaving Rust.
 //!
 //! # Fidelity notes — behaviour reproduced on purpose
 //!
@@ -45,9 +44,6 @@
 use bigdecimal::num_traits::FromPrimitive;
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
-use pyo3::exceptions::PyException;
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -56,8 +52,9 @@ use std::str::FromStr;
 // ===========================================================================
 
 /// The exception kinds this layer can produce, each carrying the *exact*
-/// message Python formats.
-#[derive(Debug)]
+/// message Python formats. The PyO3 binder maps each variant onto the matching
+/// Python exception class.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum W2nError {
     /// `words2num2.base.Words2NumError` — a `ValueError` subclass.
     Words2Num(String),
@@ -66,8 +63,6 @@ pub enum W2nError {
     /// `KeyError` — `SCALE_SUFFIXES[scale_str]` misses (e.g. `"$5kn"`).
     /// Python's `KeyError` stringifies as `repr(key)`, hence the odd quoting.
     Key(String),
-    /// An error raised by the Python side that we must not swallow.
-    Py(PyErr),
 }
 
 impl W2nError {
@@ -79,41 +74,8 @@ impl W2nError {
         match self {
             W2nError::Words2Num(m) | W2nError::NotImplemented(m) => m.clone(),
             W2nError::Key(k) => py_repr_str(k),
-            W2nError::Py(_) => String::from("<python error>"),
         }
     }
-
-    /// Re-raise as the matching Python exception. `Words2NumError` is fetched
-    /// from `words2num2.base` so callers' `except Words2NumError` keeps working.
-    pub fn into_pyerr(self, py: Python<'_>) -> PyErr {
-        match self {
-            W2nError::Words2Num(m) => match py
-                .import("words2num2.base")
-                .and_then(|b| b.getattr("Words2NumError"))
-            {
-                Ok(cls) => PyErr::from_value(match cls.call1((m.clone(),)) {
-                    Ok(v) => v,
-                    Err(e) => return e,
-                }),
-                Err(_) => pyo3::exceptions::PyValueError::new_err(m),
-            },
-            W2nError::NotImplemented(m) => pyo3::exceptions::PyNotImplementedError::new_err(m),
-            W2nError::Key(k) => pyo3::exceptions::PyKeyError::new_err(k),
-            W2nError::Py(e) => e,
-        }
-    }
-}
-
-impl From<PyErr> for W2nError {
-    fn from(e: PyErr) -> Self {
-        W2nError::Py(e)
-    }
-}
-
-/// `except Exception` — deliberately *not* `except BaseException`, so a
-/// `KeyboardInterrupt` / `SystemExit` still propagates like it does in Python.
-fn is_py_exception(py: Python<'_>, e: &PyErr) -> bool {
-    e.is_instance_of::<PyException>(py)
 }
 
 // ===========================================================================
@@ -171,25 +133,22 @@ impl W2nValue {
             }
         }
     }
+}
 
-    /// Convert a Python `int` / `float` / `Decimal` into a [`W2nValue`].
-    pub fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<W2nValue> {
-        use pyo3::types::{PyFloat, PyInt};
-        if obj.is_instance_of::<PyInt>() {
-            // NB: Python's `bool` is a subclass of `int`; a converter returning
-            // `True` would stringify as "True" in Python but as "1" here. No
-            // words2num2 converter does that.
-            return Ok(W2nValue::Int(obj.extract::<BigInt>()?));
-        }
-        if obj.is_instance_of::<PyFloat>() {
-            return Ok(W2nValue::Float(obj.extract::<f64>()?));
-        }
-        // Decimal — go through its own `str()` so the (coefficient, exponent)
-        // pair survives exactly.
-        let s: String = obj.str()?.extract()?;
-        BigDecimal::from_str(&s)
-            .map(W2nValue::Dec)
-            .map_err(|_| pyo3::exceptions::PyTypeError::new_err(format!("unsupported value {}", s)))
+/// Convert an English-grammar value ([`crate::w2n_lang_en::W2nValue`]) into a
+/// sentence-layer [`W2nValue`].
+///
+/// LIMITATION: `PyDec` carries a signed zero (`Decimal('-0.0')`), which
+/// `BigDecimal` cannot; a negative-zero decimal therefore loses its sign here.
+/// It is unreachable through the sentence walker (a run cannot start with
+/// "minus", so a negative decimal never heads a run) and through the tested
+/// `auto_parse` paths.
+fn en_to_sentence_value(v: crate::w2n_lang_en::W2nValue) -> W2nValue {
+    use crate::w2n_lang_en::W2nValue as E;
+    match v {
+        E::Int(i) => W2nValue::Int(i),
+        E::Float(f) => W2nValue::Float(f),
+        E::Dec(d) => W2nValue::Dec(d.to_bigdecimal()),
     }
 }
 
@@ -469,7 +428,7 @@ fn py_rstrip_char(s: &str, ch: char) -> &str {
 
 /// `re.sub(r"[\.,;:!\?\"']+$", "", s)` — drop the trailing punctuation run.
 fn rstrip_punct(s: &str) -> &str {
-    s.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '"' | '\''))
+    s.trim_end_matches(['.', ',', ';', ':', '!', '?', '"', '\''])
 }
 
 /// `re.search(r"[\.,;:!\?\"']+$", s)` → `m.group()`, or `""`.
@@ -581,78 +540,274 @@ pub fn resolve_lang(lang: &str) -> Result<String, W2nError> {
 }
 
 // ===========================================================================
-// Python host — the parts that stay in the interpreter
+// Converter — the per-locale dispatch, entirely in Rust
 // ===========================================================================
 
-/// `converter.to_cardinal(token)` succeeded? (`_token_is_number_word`)
-fn token_is_number_word(
-    py: Python<'_>,
-    token: &str,
-    converter: &Bound<'_, PyAny>,
-) -> Result<bool, W2nError> {
-    match converter.call_method1("to_cardinal", (token,)) {
-        Ok(_) => Ok(true),
-        Err(e) if is_py_exception(py, &e) => Ok(false),
-        Err(e) => Err(W2nError::Py(e)),
-    }
+/// `Words2Num_Base.NEGATIVE_WORDS` — every generic locale inherits this; no
+/// locale module overrides it.
+const BASE_NEGATIVE_WORDS: [&str; 2] = ["minus", "negative"];
+
+/// A per-locale converter, standing in for `CONVERTER_CLASSES[lang]`.
+enum Converter {
+    /// `Words2Num_EN` — the one hand-written grammar.
+    En,
+    /// A `Words2Num_Base` subclass; the field is the num2words2 core key its
+    /// `LANG` attribute carries (e.g. `"fr"`, `"zh_CN"`).
+    Table(&'static str),
 }
 
-/// `SentenceConverter._starts_run` — a run must open with a real number word,
-/// never with `"and"` / `"point"` / `"minus"`.
-fn starts_run(
-    py: Python<'_>,
-    token: &str,
-    converter: &Bound<'_, PyAny>,
-) -> Result<bool, W2nError> {
-    if token.is_empty() {
-        return Ok(false);
-    }
-    let dehyphened = token.replace('-', " ");
-    for sub in py_split_whitespace(&dehyphened) {
-        if token_is_number_word(py, sub, converter)? {
-            return Ok(true);
+/// Resolve a `CONVERTER_CLASSES` key (as produced by [`resolve_lang`]) to its
+/// [`Converter`].
+///
+/// Most keys map to the same `LANG`, but three do not — matching the Python
+/// registry: `"zh"`/`"cn"` both use `Words2Num_ZH_CN` (`LANG="zh_CN"`) and
+/// `"jp"` uses `Words2Num_JA` (`LANG="ja"`).
+fn converter_for(resolved: &str) -> Converter {
+    match resolved {
+        "en" => Converter::En,
+        "zh" | "cn" => Converter::Table("zh_CN"),
+        "jp" => Converter::Table("ja"),
+        // `resolved` is guaranteed to be one of CONVERTER_LANGS.
+        other => {
+            let key = CONVERTER_LANGS
+                .iter()
+                .copied()
+                .find(|k| *k == other)
+                .unwrap_or("en");
+            Converter::Table(key)
         }
     }
-    Ok(false)
 }
 
-/// `SentenceConverter._is_candidate` — cheap pre-filter for run growth.
-fn is_candidate(
-    py: Python<'_>,
-    token: &str,
-    converter: &Bound<'_, PyAny>,
-    includable: &[&str],
-) -> Result<bool, W2nError> {
-    if token.is_empty() {
-        return Ok(false);
+impl Converter {
+    /// `converter.to_cardinal(token)` did not raise? (`_token_is_number_word`).
+    fn is_number_word(&self, token: &str) -> bool {
+        self.to_cardinal(token).is_ok()
     }
-    if includable.contains(&token) {
-        return Ok(true);
-    }
-    let dehyphened = token.replace('-', " ");
-    for sub in py_split_whitespace(&dehyphened) {
-        if token_is_number_word(py, sub, converter)? {
-            return Ok(true);
+
+    fn to_cardinal(&self, text: &str) -> Result<W2nValue, W2nError> {
+        match self {
+            Converter::En => en_convert(crate::en_to_cardinal(text)),
+            Converter::Table(lang) => base_convert(lang, text, false),
         }
     }
-    Ok(false)
+
+    fn to_ordinal(&self, text: &str) -> Result<W2nValue, W2nError> {
+        match self {
+            Converter::En => en_convert(crate::en_to_ordinal(text)),
+            Converter::Table(lang) => base_convert(lang, text, true),
+        }
+    }
+
+    fn to_year(&self, text: &str) -> Result<W2nValue, W2nError> {
+        match self {
+            Converter::En => en_convert(crate::en_to_year(text)),
+            // `Words2Num_Base.to_year` == `self.to_cardinal`.
+            Converter::Table(lang) => base_convert(lang, text, false),
+        }
+    }
+
+    /// `Words2Num_Base.to_ordinal_num` — EN inherits it unchanged.
+    fn to_ordinal_num(&self, text: &str) -> Result<W2nValue, W2nError> {
+        base_ordinal_num(text)
+    }
+
+    /// `Words2Num_Base.to_currency` == `self.to_cardinal` (polymorphic, so EN
+    /// currency uses EN cardinal).
+    fn to_currency(&self, text: &str) -> Result<W2nValue, W2nError> {
+        self.to_cardinal(text)
+    }
+
+    /// Dispatch `getattr(converter, "to_{to}")(token, **kwargs)`.
+    ///
+    /// `has_kwargs` models the sentence walker passing `**kwargs` through: the
+    /// standard converters accept none, so Python raises `TypeError` there,
+    /// which the walker swallows as "not a number word". An unknown `to`
+    /// raises `AttributeError` in Python (`getattr` miss) — also swallowed.
+    /// Both are represented here as an `Err` the caller drops.
+    fn convert(&self, to: &str, text: &str, has_kwargs: bool) -> Result<W2nValue, W2nError> {
+        if has_kwargs {
+            // TypeError: to_*() takes no keyword arguments.
+            return Err(W2nError::Words2Num(
+                "unexpected keyword argument".to_string(),
+            ));
+        }
+        match to {
+            "cardinal" => self.to_cardinal(text),
+            "ordinal" => self.to_ordinal(text),
+            "year" => self.to_year(text),
+            "ordinal_num" => self.to_ordinal_num(text),
+            "currency" => self.to_currency(text),
+            // AttributeError: converter has no to_<to>.
+            _ => Err(W2nError::NotImplemented(format!(
+                "'Words2Num' object has no attribute 'to_{}'",
+                to
+            ))),
+        }
+    }
 }
 
-/// `from .. import words2num; words2num(text, lang=lang)`.
-fn call_words2num<'py>(
-    py: Python<'py>,
-    text: &str,
-    lang: &str,
-) -> PyResult<Bound<'py, PyAny>> {
-    let m = py.import("words2num2")?;
-    let kwargs = PyDict::new(py);
-    kwargs.set_item("lang", lang)?;
-    m.call_method("words2num", (text,), Some(&kwargs))
+/// Wrap the English grammar's `Result` into the sentence-layer types.
+fn en_convert(
+    r: Result<crate::w2n_lang_en::W2nValue, crate::w2n_lang_en::W2nError>,
+) -> Result<W2nValue, W2nError> {
+    match r {
+        Ok(v) => Ok(en_to_sentence_value(v)),
+        Err(e) => Err(W2nError::Words2Num(e.msg)),
+    }
+}
+
+/// Port of `Words2Num_Base._convert`: reverse-table lookup, then the
+/// sign/digit/error tail (`_parse_literal`).
+fn base_convert(lang: &str, text: &str, ordinal: bool) -> Result<W2nValue, W2nError> {
+    // `_rust_lookup`: guarded on `LANG in _RUST_LANGS`, and any error from the
+    // core is swallowed to `None` (`except Exception: return None`).
+    if crate::supported_langs().contains(&lang) {
+        let neg = [
+            BASE_NEGATIVE_WORDS[0].to_string(),
+            BASE_NEGATIVE_WORDS[1].to_string(),
+        ];
+        if let Ok(Some(v)) = crate::lookup(lang, text, ordinal, &neg) {
+            return Ok(W2nValue::Int(BigInt::from(v)));
+        }
+    }
+    parse_literal(text)
+}
+
+/// Port of `Words2Num_Base._parse_literal` — a bare digit string, a leading
+/// sign word, or genuinely unparseable input.
+///
+/// `errmsg_unparseable` is `"cannot parse %r as a number"`.
+fn parse_literal(text: &str) -> Result<W2nValue, W2nError> {
+    let normalized = crate::normalize(text);
+    let unparseable = |s: &str| W2nError::Words2Num(format!("cannot parse {} as a number", py_repr_str(s)));
+    if normalized.is_empty() {
+        return Err(unparseable(&normalized));
+    }
+    for neg in BASE_NEGATIVE_WORDS {
+        if let Some(rest) = normalized.strip_prefix(&format!("{} ", neg)) {
+            return finish_parse_literal(rest, -1);
+        }
+        if normalized == neg {
+            return Err(unparseable(&normalized));
+        }
+    }
+    finish_parse_literal(&normalized, 1)
+}
+
+/// The `try: … except ValueError: pass; raise` tail of `_parse_literal`.
+fn finish_parse_literal(normalized: &str, sign: i64) -> Result<W2nValue, W2nError> {
+    if normalized.contains('.') {
+        if let Some(f) = py_float(normalized) {
+            return Ok(W2nValue::Float(if sign < 0 { -f } else { f }));
+        }
+    } else if let Some(i) = py_int(normalized) {
+        return Ok(W2nValue::Int(if sign < 0 { -i } else { i }));
+    }
+    Err(W2nError::Words2Num(format!(
+        "cannot parse {} as a number",
+        py_repr_str(normalized)
+    )))
+}
+
+/// Port of `Words2Num_Base.to_ordinal_num`.
+///
+/// ```python
+/// m = re.search(r"-?\d+", text)
+/// if not m: raise Words2NumError("cannot parse %r as a number" % text)
+/// return int(m.group())
+/// ```
+fn base_ordinal_num(text: &str) -> Result<W2nValue, W2nError> {
+    let chars: Vec<char> = text.chars().collect();
+    for i in 0..chars.len() {
+        // `-?\d+`: a '-' counts only when a digit follows it.
+        if chars[i] == '-' && chars.get(i + 1).copied().is_some_and(is_unicode_digit) {
+            let mut j = i + 1;
+            while j < chars.len() && is_unicode_digit(chars[j]) {
+                j += 1;
+            }
+            let group: String = chars[i..j].iter().collect();
+            return py_int(&group)
+                .map(W2nValue::Int)
+                .ok_or_else(|| W2nError::Words2Num(unparseable_msg(text)));
+        }
+        if is_unicode_digit(chars[i]) {
+            let mut j = i;
+            while j < chars.len() && is_unicode_digit(chars[j]) {
+                j += 1;
+            }
+            let group: String = chars[i..j].iter().collect();
+            return py_int(&group)
+                .map(W2nValue::Int)
+                .ok_or_else(|| W2nError::Words2Num(unparseable_msg(text)));
+        }
+    }
+    Err(W2nError::Words2Num(unparseable_msg(text)))
+}
+
+fn unparseable_msg(text: &str) -> String {
+    format!("cannot parse {} as a number", py_repr_str(text))
+}
+
+/// Python's `int(str)` over a `_normalize`-shaped string (optional sign, then
+/// Unicode `Nd` digits). Returns `None` where Python raises `ValueError`.
+fn py_int(s: &str) -> Option<BigInt> {
+    let t = s.trim_matches(py_is_space);
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    if body.is_empty() || !body.chars().all(is_unicode_digit) {
+        return None;
+    }
+    let ascii = to_ascii_digits(body);
+    let v = BigInt::from_str(&ascii).ok()?;
+    Some(if neg { -v } else { v })
+}
+
+/// Python's `float(str)` over a `_normalize`-shaped decimal string.
+fn py_float(s: &str) -> Option<f64> {
+    let t = s.trim_matches(py_is_space);
+    let ascii = to_ascii_digits(t);
+    ascii.parse::<f64>().ok()
+}
+
+/// `from .. import words2num; words2num(text, lang=lang)` — resolve the locale
+/// and run its `to_cardinal`.
+fn call_words2num(text: &str, lang: &str) -> Result<W2nValue, W2nError> {
+    let resolved = resolve_lang(lang)?;
+    converter_for(&resolved).to_cardinal(text)
 }
 
 // ===========================================================================
 // `words2num_sentence` / `convert_sentence` / `sentence_to_words`
 // ===========================================================================
+
+/// `SentenceConverter._starts_run` — a run must open with a real number word,
+/// never with `"and"` / `"point"` / `"minus"`.
+fn starts_run(converter: &Converter, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let dehyphened = token.replace('-', " ");
+    py_split_whitespace(&dehyphened)
+        .iter()
+        .any(|sub| converter.is_number_word(sub))
+}
+
+/// `SentenceConverter._is_candidate` — cheap pre-filter for run growth.
+fn is_candidate(converter: &Converter, token: &str, includable: &[&str]) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    if includable.contains(&token) {
+        return true;
+    }
+    let dehyphened = token.replace('-', " ");
+    py_split_whitespace(&dehyphened)
+        .iter()
+        .any(|sub| converter.is_number_word(sub))
+}
 
 /// `SentenceConverter.INCLUDABLE` — tokens allowed *inside* a run though they
 /// are not numbers. Keyed by the **resolved** code, so only exactly `"en"`
@@ -665,25 +820,22 @@ const INCLUDABLE_EN: [&str; 7] = ["and", "point", "dot", "minus", "negative", "a
 /// Walks the sentence and, at each position that opens with a real number
 /// word, grows the longest run of tokens the per-language converter accepts.
 ///
-/// The parsed value is stringified with Python's own `str()` rather than
-/// through [`W2nValue`]: the converter for any of the 120 locales may hand
-/// back a type this module does not model, and `str()` is exact for all of
-/// them by construction.
+/// `has_kwargs` is whether the Python caller passed extra keyword arguments
+/// through (`kwargs or None` was truthy). The standard converters accept none,
+/// so any such call fails every conversion — matching Python's swallowed
+/// `TypeError`.
 pub fn words2num_sentence(
-    py: Python<'_>,
     sentence: &str,
     lang: &str,
     to: &str,
-    kwargs: Option<&Bound<'_, PyDict>>,
+    has_kwargs: bool,
 ) -> Result<String, W2nError> {
     let resolved = resolve_lang(lang)?;
-    let module = py.import("words2num2")?;
-    let converter = module.getattr("CONVERTER_CLASSES")?.get_item(&resolved)?;
+    let converter = converter_for(&resolved);
     let includable: &[&str] = if resolved == "en" { &INCLUDABLE_EN } else { &[] };
 
     let parts = tokenize(sentence);
     let n = parts.len();
-    let method = format!("to_{}", to);
     let mut out = String::new();
     let mut i = 0usize;
 
@@ -696,14 +848,14 @@ pub fn words2num_sentence(
         }
         // A run must START with a real number word.
         let head = rstrip_punct(piece).to_lowercase();
-        if !starts_run(py, &head, &converter)? {
+        if !starts_run(&converter, &head) {
             out.push_str(piece);
             i += 1;
             continue;
         }
 
         // Grow a number run starting at i.
-        let mut best_value: Option<Bound<'_, PyAny>> = None;
+        let mut best_value: Option<W2nValue> = None;
         let mut best_end = i;
         let mut j = i;
         while j < n {
@@ -713,21 +865,18 @@ pub fn words2num_sentence(
                 continue;
             }
             let clean = rstrip_punct(tok).to_lowercase();
-            if !is_candidate(py, &clean, &converter, includable)? {
+            if !is_candidate(&converter, &clean, includable) {
                 break;
             }
             let run = parts[i..=j].concat();
             let stripped = rstrip_punct(py_strip(&run)).to_string();
-            match converter.call_method(method.as_str(), (stripped.as_str(),), kwargs) {
-                Ok(v) => {
-                    // Python compares `best_value is not None`, so a converter
-                    // returning None rejects the run while still advancing
-                    // best_end — a later success can still claim it.
-                    best_value = if v.is_none() { None } else { Some(v) };
-                    best_end = j;
-                }
-                Err(e) if is_py_exception(py, &e) => {}
-                Err(e) => return Err(W2nError::Py(e)),
+            // The standard converters never return `None`, so a successful
+            // parse always both records the value and advances best_end. A
+            // raised error is Python's `except Exception` — swallow and keep
+            // growing.
+            if let Ok(v) = converter.convert(to, &stripped, has_kwargs) {
+                best_value = Some(v);
+                best_end = j;
             }
             // A token ending in terminal punctuation closes the run.
             if ends_with_terminal_punct(tok) {
@@ -740,8 +889,7 @@ pub fn words2num_sentence(
             // Preserve trailing punctuation that was stripped during parse.
             let run = parts[i..=best_end].concat();
             let trailing = trailing_punct(&run);
-            let s: String = v.str()?.extract()?;
-            out.push_str(&s);
+            out.push_str(&v.py_str());
             out.push_str(trailing);
             i = best_end + 1;
         } else {
@@ -754,24 +902,22 @@ pub fn words2num_sentence(
 
 /// `convert_sentence = words2num_sentence` (alias, parity with num2words2).
 pub fn convert_sentence(
-    py: Python<'_>,
     sentence: &str,
     lang: &str,
     to: &str,
-    kwargs: Option<&Bound<'_, PyDict>>,
+    has_kwargs: bool,
 ) -> Result<String, W2nError> {
-    words2num_sentence(py, sentence, lang, to, kwargs)
+    words2num_sentence(sentence, lang, to, has_kwargs)
 }
 
 /// `sentence_to_words = words2num_sentence` (alias, parity with num2words2).
 pub fn sentence_to_words(
-    py: Python<'_>,
     sentence: &str,
     lang: &str,
     to: &str,
-    kwargs: Option<&Bound<'_, PyDict>>,
+    has_kwargs: bool,
 ) -> Result<String, W2nError> {
-    words2num_sentence(py, sentence, lang, to, kwargs)
+    words2num_sentence(sentence, lang, to, has_kwargs)
 }
 
 // ===========================================================================
@@ -994,11 +1140,10 @@ impl Quantity {
 // `formats.py` — DUPLICATED HERE ON PURPOSE
 // ===========================================================================
 //
-// `auto_parse` cannot run without `parse_number_string`, but `formats.py` is
-// another agent's file in this same port. These are kept **private** so they
-// cannot collide at link time with a sibling `w2n_formats` module; the wiring
-// step should delete this block and call the canonical port instead. The
-// behaviour below is verified against the interpreter either way.
+// `auto_parse` cannot run without `parse_number_string`. These private helpers
+// are a self-contained copy that stays byte-consistent with this module's own
+// Unicode digit set ([`ND_BLOCKS`]); the canonical crate-level port lives in
+// [`crate::w2n_formats`]. Both are verified against the interpreter.
 
 /// `formats.NUMBER_FORMAT_DEFAULTS` — (lang, thousands, decimal).
 const NUMBER_FORMAT_DEFAULTS: &[(&str, &str, &str)] = &[
@@ -1121,7 +1266,7 @@ fn to_number(s: &str) -> Result<W2nValue, W2nError> {
     }
 }
 
-/// `re.sub(r"[\s\xa0  ]", "", s)` — `\s` already covers all three
+/// `re.sub(r"[\s\xa0  ]", "", s)` — `\s` already covers all three
 /// named spaces, so this is `\s` plus belt-and-braces.
 fn strip_space_like(s: &str) -> String {
     s.chars()
@@ -1184,7 +1329,7 @@ fn resolve_single_sep(s: &str, sep: char) -> String {
 
 /// `formats._auto_detect_parse`.
 fn auto_detect_parse(s: &str) -> Result<W2nValue, W2nError> {
-    // re.sub(r"[\s\xa0  '_]", "", s)
+    // re.sub(r"[\s\xa0  '_]", "", s)
     let s2: String = s
         .chars()
         .filter(|c| {
@@ -1278,7 +1423,7 @@ fn py_strip_start(s: &str) -> &str {
 // `auto_parse` internals
 // ===========================================================================
 
-/// The `[\d.,'\xa0   _]` class shared by every `auto.py` regex.
+/// The `[\d.,'\xa0   _]` class shared by every `auto.py` regex.
 fn is_num_class(c: char) -> bool {
     is_unicode_digit(c)
         || matches!(
@@ -1287,7 +1432,7 @@ fn is_num_class(c: char) -> bool {
         )
 }
 
-/// `[.,'_\xa0   ]` — the same eight non-digit characters, used as
+/// `[.,'_\xa0   ]` — the same eight non-digit characters, used as
 /// the internal separator in `auto_parse_sentence`'s `NUM`.
 fn is_num_sep(c: char) -> bool {
     matches!(
@@ -1337,7 +1482,7 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// `([-+]?[\d.,'\xa0   _]+)`, greedy.
+/// `([-+]?[\d.,'\xa0   _]+)`, greedy.
 ///
 /// No backtracking is needed anywhere this is used: the only characters the
 /// greedy run could give back that a following `\s*` would accept are the four
@@ -1370,10 +1515,10 @@ fn eat_iso_code(cur: &mut Cursor) -> Option<String> {
 /// `converters.auto._try_currency_prefix`
 ///
 /// ```python
-/// m = re.match(r"^\s*([$€£¥₹₽₩₺])\s*([-+]?[\d.,'\xa0   _]+)"
+/// m = re.match(r"^\s*([$€£¥₹₽₩₺])\s*([-+]?[\d.,'\xa0   _]+)"
 ///              r"\s*([kKmMbBtT][nN]?)?\s*$", text)
 /// ...
-/// m = re.match(r"^\s*([A-Z]{3})\s*([-+]?[\d.,'\xa0   _]+)\s*$", text)
+/// m = re.match(r"^\s*([A-Z]{3})\s*([-+]?[\d.,'\xa0   _]+)\s*$", text)
 /// if m and m.group(1) in CURRENCIES: ...
 /// ```
 fn try_currency_prefix(text: &[char]) -> Option<(String, String, Option<String>)> {
@@ -1523,7 +1668,7 @@ fn resolve_unit(
 /// `converters.auto._try_digit_unit`
 ///
 /// ```python
-/// m = re.match(r"^\s*([-+]?[\d.,'\xa0   _]+)\s*(°[CF]?|°[CF]?|µm|"
+/// m = re.match(r"^\s*([-+]?[\d.,'\xa0   _]+)\s*(°[CF]?|°[CF]?|µm|"
 ///              r"[a-zA-Z]+|%)\s*$", text)
 /// ```
 /// The `°[CF]?` branch is duplicated in the source; the second is dead.
@@ -1637,7 +1782,6 @@ fn word_unit(tail: &str) -> Option<(&'static str, &'static str)> {
 
 /// `converters.auto._try_word_unit` — a word-form number plus a unit word.
 fn try_word_unit(
-    py: Python<'_>,
     text: &str,
     lang: &str,
     prefer: &HashMap<String, String>,
@@ -1665,10 +1809,11 @@ fn try_word_unit(
         }
     };
 
-    let value = match call_words2num(py, head, lang) {
-        Ok(v) => W2nValue::from_py(&v)?,
-        Err(e) if is_py_exception(py, &e) => return Ok(None),
-        Err(e) => return Err(W2nError::Py(e)),
+    // `words2num(head, lang=lang)` — a raised Exception (unparseable /
+    // unsupported locale) is swallowed to "not a unit expression".
+    let value = match call_words2num(head, lang) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
     };
 
     if kind == "currency" {
@@ -1712,7 +1857,6 @@ fn try_word_unit(
 /// A binding that accepts `PyAny` must reproduce
 /// `Words2NumError("expected str, got %r" % type(text).__name__)` itself.
 pub fn auto_parse(
-    py: Python<'_>,
     text: &str,
     lang: &str,
     prefer: &HashMap<String, String>,
@@ -1759,7 +1903,7 @@ pub fn auto_parse(
     }
 
     // 4. Word-form number + unit: "forty-two kg", "twenty-three percent"
-    if let Some(mut res) = try_word_unit(py, text, lang, prefer)? {
+    if let Some(mut res) = try_word_unit(text, lang, prefer)? {
         res.raw = raw.to_string();
         return Ok(res);
     }
@@ -1771,34 +1915,22 @@ pub fn auto_parse(
         Err(e) => return Err(e),
     }
 
-    match call_words2num(py, text, lang) {
-        Ok(v) => Ok(Quantity::bare(W2nValue::from_py(&v)?, raw)),
-        Err(e) if is_py_exception(py, &e) => {
-            // raise Words2NumError("could not auto-parse %r: %s" % (raw, exc))
-            let msg = py_exc_str(py, &e);
-            Err(W2nError::Words2Num(format!(
-                "could not auto-parse {}: {}",
-                py_repr_str(raw),
-                msg
-            )))
-        }
-        Err(e) => Err(W2nError::Py(e)),
+    match call_words2num(text, lang) {
+        Ok(v) => Ok(Quantity::bare(v, raw)),
+        // raise Words2NumError("could not auto-parse %r: %s" % (raw, exc))
+        Err(e) => Err(W2nError::Words2Num(format!(
+            "could not auto-parse {}: {}",
+            py_repr_str(raw),
+            e.message()
+        ))),
     }
-}
-
-/// `"%s" % exc` — i.e. `str(exc)`.
-fn py_exc_str(py: Python<'_>, e: &PyErr) -> String {
-    e.value(py)
-        .str()
-        .and_then(|s| s.extract::<String>())
-        .unwrap_or_else(|_| String::new())
 }
 
 // ===========================================================================
 // `auto_parse_sentence`
 // ===========================================================================
 
-/// `NUM = r"[-+]?\d+(?:[.,'_\xa0   ]\d+)*"`
+/// `NUM = r"[-+]?\d+(?:[.,'_\xa0   ]\d+)*"`
 ///
 /// Note this is stricter than the `[\d.,'… _]+` class used inside
 /// `auto_parse`: a separator only counts when digits immediately follow, which
@@ -1871,10 +2003,8 @@ fn match_quantity_at(chars: &[char], pos: usize) -> Option<usize> {
                 cur.i += 1;
                 cur.eat_if(|c| c == 'C' || c == 'F');
                 true
-            } else if cur.peek() == Some('%') {
-                cur.i += 1;
-                true
-            } else if cur.peek().is_some_and(is_currency_symbol) {
+            } else if cur.peek() == Some('%') || cur.peek().is_some_and(is_currency_symbol) {
+                // `% | [$€£¥₹₽₩₺]` — both consume exactly one character.
                 cur.i += 1;
                 true
             } else if (0..3).all(|k| cur.at(k).is_some_and(|c| c.is_ascii_uppercase())) {
@@ -1998,7 +2128,6 @@ fn format_quantity(q: &Quantity, expand: bool) -> String {
 /// `KeyError` (see [`W2nError::Key`]) propagates, exactly as in Python, where
 /// `_replace` only catches `Words2NumError`.
 pub fn auto_parse_sentence(
-    py: Python<'_>,
     text: &str,
     lang: &str,
     prefer: &HashMap<String, String>,
@@ -2015,7 +2144,7 @@ pub fn auto_parse_sentence(
             // least one character), so no zero-width-match handling is needed.
             Some(end) if end > i => {
                 let raw: String = chars[i..end].iter().collect();
-                match auto_parse(py, &raw, lang, prefer, thousands_sep, decimal_sep) {
+                match auto_parse(&raw, lang, prefer, thousands_sep, decimal_sep) {
                     Ok(q) => out.push_str(&format_quantity(&q, expand)),
                     Err(W2nError::Words2Num(_)) => out.push_str(&raw),
                     Err(e) => return Err(e),
@@ -2029,4 +2158,104 @@ pub fn auto_parse_sentence(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int(n: i64) -> W2nValue {
+        W2nValue::Int(BigInt::from(n))
+    }
+
+    #[test]
+    fn resolve_lang_rules() {
+        assert_eq!(resolve_lang("en").unwrap(), "en");
+        assert_eq!(resolve_lang("en-US").unwrap(), "en"); // dash + prefix
+        assert_eq!(resolve_lang("zh").unwrap(), "zh");
+        assert!(resolve_lang("xx").is_err());
+    }
+
+    #[test]
+    fn converter_en_cardinal_ordinal_year() {
+        let c = converter_for("en");
+        assert_eq!(c.to_cardinal("forty-two").unwrap(), int(42));
+        assert_eq!(c.to_ordinal("twenty-first").unwrap(), int(21));
+        assert_eq!(c.to_year("nineteen ninety nine").unwrap(), int(1999));
+        assert!(c.to_cardinal("minus").is_err()); // not a run head
+    }
+
+    #[test]
+    fn walker_matches_python() {
+        assert_eq!(
+            words2num_sentence("I bought twenty-three apples.", "en", "cardinal", false).unwrap(),
+            "I bought 23 apples."
+        );
+        assert_eq!(
+            words2num_sentence(
+                "In nineteen ninety nine, two thousand people came.",
+                "en",
+                "year",
+                false
+            )
+            .unwrap(),
+            "In 1999, 2000 people came."
+        );
+        // A run may not start with "minus".
+        assert_eq!(
+            words2num_sentence("minus forty two", "en", "cardinal", false).unwrap(),
+            "minus 42"
+        );
+        // "point" is a valid head.
+        assert_eq!(
+            words2num_sentence("point five", "en", "cardinal", false).unwrap(),
+            "0.5"
+        );
+    }
+
+    #[test]
+    fn auto_parse_currency_and_units() {
+        let prefer = HashMap::new();
+        let q = auto_parse("$12.50", "en", &prefer, None, None).unwrap();
+        assert_eq!(q.value, W2nValue::Float(12.5));
+        assert_eq!(q.unit.as_deref(), Some("USD"));
+        assert_eq!(q.kind.as_deref(), Some("currency"));
+
+        let q = auto_parse("forty-two kg", "en", &prefer, None, None).unwrap();
+        assert_eq!(q.value, int(42));
+        assert_eq!(q.unit.as_deref(), Some("kg"));
+
+        let q = auto_parse("$5bn", "en", &prefer, None, None).unwrap();
+        assert_eq!(q.value, int(5_000_000_000));
+
+        // KeyError escapes for an invalid scale suffix.
+        assert_eq!(
+            auto_parse("$5kn", "en", &prefer, None, None),
+            Err(W2nError::Key("kn".to_string()))
+        );
+    }
+
+    #[test]
+    fn auto_parse_sentence_rewrites() {
+        let prefer = HashMap::new();
+        let out = auto_parse_sentence(
+            "The package weighs 5kg and costs $12.50.",
+            "en",
+            &prefer,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(out.contains("5 kg"));
+        assert!(out.contains("12.5 USD"));
+    }
+
+    #[test]
+    fn pluralize_rules() {
+        assert_eq!(pluralize(Some("dollar"), &int(5)).as_deref(), Some("dollars"));
+        assert_eq!(pluralize(Some("dollar"), &int(1)).as_deref(), Some("dollar"));
+        assert_eq!(pluralize(Some("foot"), &int(5)).as_deref(), Some("feet"));
+        assert_eq!(pluralize(Some("yen"), &int(5)).as_deref(), Some("yen"));
+    }
 }

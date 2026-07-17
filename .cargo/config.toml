@@ -1,0 +1,10 @@
+# The PyO3 `extension-module` cdylib (`_rust`) intentionally leaves the
+# CPython symbols unresolved at link time — the host interpreter provides them
+# when the module is imported. maturin passes these flags when it builds the
+# wheel; mirror them here so a plain `cargo build` / `cargo test` links the
+# cdylib on macOS instead of failing with "symbol(s) not found".
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
