@@ -815,10 +815,7 @@ mod tests {
         // The Python table has no NBSP/NNBSP/THIN SPACE anywhere.
         for (k, f) in NUMBER_FORMAT_DEFAULTS {
             for sep in [f.thousands, f.decimal] {
-                assert!(
-                    sep.chars().all(|c| c.is_ascii()),
-                    "{k} has a non-ASCII separator"
-                );
+                assert!(sep.is_ascii(), "{k} has a non-ASCII separator");
             }
         }
     }
