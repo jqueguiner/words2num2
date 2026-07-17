@@ -348,11 +348,12 @@ def words2num_sentence(sentence, lang="en", to="cardinal", **kwargs):
     """Convert all word-numbers in ``sentence`` to numeric form.
 
     Walks the sentence and tries to match the longest possible run of
-    number tokens at each position. Non-number tokens pass through.
+    number tokens at each position. Non-number tokens pass through. The
+    walk is a full port in the core; this is a thin binder over it.
     """
-    from .converters.sentence import SentenceConverter
+    from .base import _RUST
 
-    return SentenceConverter().convert(sentence, lang=lang, to=to, **kwargs)
+    return _RUST.words2num_sentence(sentence, lang, to, kwargs or None)
 
 
 # Aliases (parity with num2words2)

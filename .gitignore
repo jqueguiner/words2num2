@@ -13,6 +13,20 @@ htmlcov/
 .venv/
 venv/
 .env
-words2num2/_version.py
 *.swp
 .DS_Store
+
+# _version.py is now committed statically (maturin does not regenerate it).
+
+# Compiled Rust extension — built per-platform by maturin, too large / not
+# portable to commit. Build with: maturin build --release  (see README).
+*.so
+*.abi3.so
+*.pyd
+*.dylib
+/wheels/
+*.whl
+
+# Rust build artifacts (vendored crates under ./rust)
+/rust/target/
+/rust/**/target/

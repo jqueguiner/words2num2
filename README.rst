@@ -66,6 +66,15 @@ entries**) and adds a free-text *auto-parse* mode that handles
 currencies, units, configurable thousands/decimal separators, and
 ASR/LLM-style mixed text.
 
+It is **Rust-powered with a thin Python binder**. The whole parsing engine —
+the English grammar, the generic reverse-lookup backend, the sentence walker,
+number-format parsing and auto-parse — runs in a compiled Rust core
+(PyO3/``abi3``); Python only shapes arguments and results. The core embeds the
+num2words2 conversion engine natively, so ``words2num2`` is **self-contained
+and has no runtime dependencies**, while running several times faster than the
+former pure-Python implementation. Output is unchanged — validated against a
+frozen corpus of ~11,000 round-trip cases.
+
 The project is hosted on GitHub_, and the full documentation is available
 in the Wiki_. Contributions are welcome.
 
@@ -94,6 +103,38 @@ the forward direction. ``words2num2``:
 * Pluralizes long-form units in expand mode (``5 dollars`` /
   ``1 dollar``, ``5 feet`` / ``1 foot``, ``5 yen`` / ``1 yen``).
 
+Performance
+-----------
+
+The parsing engine is compiled Rust (PyO3/``abi3``), so there is no
+Python-level tokenising or table walking on the hot path. Typical native
+throughput (Apple M-series, nanoseconds per call, after warmup):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 60 20
+
+   * - Operation
+     - ns/call
+   * - English cardinal (``"eight thousand seven hundred sixty-five"``)
+     - ~5,900
+   * - English ordinal (``"forty-second"``)
+     - ~4,100
+   * - French cardinal (``"trois cent quatre"``)
+     - ~1,900
+   * - Russian cardinal (``"сорок два"``)
+     - ~1,700
+   * - ``parse_number_string("1.234.567,89", lang="de")``
+     - ~240
+   * - ``auto_parse("$12,345.00")``
+     - ~990
+
+For the 100+ generic locales, the first call in a given language builds the
+``{words → number}`` reverse table once (~35 ms) and caches it in the core;
+every call after that is a native lookup. Output is byte-for-byte identical to
+the former pure-Python implementation, validated against a frozen corpus of
+~11,000 round-trip cases and the full test suite.
+
 Installation
 ------------
 
@@ -114,14 +155,18 @@ Installation
     cd python-words2num2
     makepkg -si
 
-**From source**::
+**From source** (needs a stable Rust toolchain and `maturin
+<https://www.maturin.rs>`_)::
 
     git clone https://github.com/jqueguiner/words2num2
     cd words2num2
-    pip install -e .
+    pip install -e .          # builds the Rust extension via maturin
+    # or, to produce a wheel:  maturin build --release
 
-``num2words2`` is a runtime dependency for the generic multi-language
-backend and is installed automatically.
+``words2num2`` is self-contained: the num2words2 conversion engine is compiled
+into the extension, so there is **no runtime dependency** on the num2words2
+package (or anything else). Wheels on PyPI are prebuilt per platform, so a
+plain ``pip install words2num2`` needs no Rust toolchain.
 
 Quickstart
 ----------

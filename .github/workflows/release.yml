@@ -1,166 +1,158 @@
-name: Build and Release
+name: Release
+
+# Builds per-platform wheels with maturin and publishes them:
+#   * wheels + sdist -> PyPI (trusted publishing / OIDC)
+#   * wheels + sdist -> GitHub Release
+# words2num2 is a single-variant package: the compiled core embeds
+# num2words2-core natively (no lingua-rs models), so each wheel is ~2-4 MB.
+# Triggered by pushing a version tag, e.g. `v0.3.0`.
 
 on:
   push:
-    branches:
-      - master
-      - main
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - master
-      - main
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (without leading v), e.g. 0.3.0"
+        required: true
+
+permissions:
+  contents: write   # create the GitHub Release + upload assets
 
 jobs:
+  # ---------------------------------------------------------------------------
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
   build:
-    name: Build Distribution
-    runs-on: ubuntu-latest
-
+    name: wheel · ${{ matrix.platform.target }}
+    needs: version
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: macos-14,       target: aarch64-apple-darwin }
+          - { os: macos-13,       target: x86_64-apple-darwin }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  manylinux: auto }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu, manylinux: auto }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # For setuptools_scm
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.13'
+      - name: Set version in pyproject
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("pyproject.toml"); s = p.read_text()
+          s = re.sub(r'(?m)^version = ".*"$',
+                     'version = "${{ needs.version.outputs.version }}"', s, count=1)
+          p.write_text(s)
+          PY
 
-    - name: Install build dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build setuptools wheel setuptools_scm
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux || '' }}
+          args: --release --out dist
+          sccache: "true"
 
-    - name: Build distribution
-      run: |
-        python -m build
-        ls -la dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.target }}
+          path: dist/*.whl
 
-    - name: Check build
-      run: |
-        pip install twine
-        twine check dist/*
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-
-  test-package:
-    name: Test Built Package
-    needs: build
+  # ---------------------------------------------------------------------------
+  sdist:
+    name: Source distribution
+    needs: version
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: Set version in pyproject
+        run: |
+          python - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("pyproject.toml"); s = p.read_text()
+          s = re.sub(r'(?m)^version = ".*"$',
+                     'version = "${{ needs.version.outputs.version }}"', s, count=1)
+          p.write_text(s)
+          PY
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.13'
-
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-
-    - name: Test installation
-      run: |
-        pip install dist/*.whl
-        python -c "import words2num2; print('Version:', getattr(words2num2, '__version__', 'not set'))"
-        python -c "from words2num2 import words2num; print('English forty-two:', words2num('forty-two'))"
-        python -c "from words2num2 import words2num; print('French quarante-deux:', words2num('quarante-deux', lang='fr'))"
-        python -c "from words2num2 import words2num_sentence; print('Sentence:', words2num_sentence('I bought twenty-three apples and fourteen pears.'))"
-
-  release:
-    name: Create GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, test-package]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-
-    - name: Generate Release Notes
-      id: release_notes
-      run: |
-        cat > release_notes.md << 'EOF'
-        ## words2num2 — inverse of num2words2
-
-        Convert spoken-form numbers back to numeric values across 100+
-        locales. Auto-generated release.
-
-        ### Installation
-        ```bash
-        pip install words2num2
-        ```
-
-        ### Usage
-        ```python
-        from words2num2 import words2num, words2num_sentence
-
-        words2num("forty-two")                          # 42
-        words2num("one thousand two hundred")           # 1200
-        words2num("quarante-deux", lang="fr")           # 42
-        words2num("zweiundvierzig", lang="de")          # 42
-        words2num_sentence("I bought twenty-three apples and fourteen pears.")
-        # 'I bought 23 apples and 14 pears.'
-        ```
-        EOF
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        body_path: release_notes.md
-        files: dist/*
-        draft: false
-        prerelease: false
-        generate_release_notes: true
-
+  # ---------------------------------------------------------------------------
   publish-pypi:
-    name: Publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, test-package, release]
+    name: Publish wheels + sdist to PyPI
+    needs: [build, sdist]
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/project/words2num2/
     permissions:
-      id-token: write
-
+      id-token: write   # trusted publishing (OIDC)
     steps:
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
 
-    - name: Check package versions
-      run: |
-        ls -la dist/
-        for file in dist/*; do
-          echo "Package: $file"
-          if [[ $file == *"+g"* ]]; then
-            echo "ERROR: Local version identifier found in package name!"
-            echo "This usually means no proper git tag exists."
-            echo "Please create a release tag first: git tag -a v1.0.0 -m 'Release v1.0.0'"
-            exit 1
-          fi
-        done
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: Attach all wheels to the GitHub Release
+    needs: [build, sdist]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+          body: |
+            Automated release built by maturin.
 
-    - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        skip-existing: true
+            `words2num2` is the Rust-powered inverse of `num2words2`: it parses
+            spoken-form numbers back to numeric values across 100+ languages.
+            Wheels embed the conversion core natively (~2-4 MB, no external
+            model files) and the package has no runtime dependencies.
+
+            ```bash
+            pip install words2num2
+            ```
