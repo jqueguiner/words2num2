@@ -205,6 +205,33 @@ fn parse_number_string(
     }
 }
 
+/// `_rust.words2num(text, lang, to, kwargs)` — the public single-token entry.
+///
+/// Mirrors `words2num2.words2num(text, lang, to, **kwargs)`: the core owns the
+/// whole dispatch (`_resolve_lang`, the en-vs-reverse-table choice, the `to`
+/// mode selection). Python forwarded `**kwargs` straight to `to_<to>(text)`,
+/// which accepts none, so any keyword argument is a `TypeError` — reproduced
+/// here rather than passed down.
+#[pyfunction]
+#[pyo3(signature = (text, lang="en", to="cardinal", kwargs=None))]
+fn words2num(
+    py: Python<'_>,
+    text: &str,
+    lang: &str,
+    to: &str,
+    kwargs: Option<Bound<'_, PyDict>>,
+) -> PyResult<PyObject> {
+    if kwargs.as_ref().is_some_and(|d| !d.is_empty()) {
+        return Err(PyTypeError::new_err(
+            "words2num() got an unexpected keyword argument",
+        ));
+    }
+    match words2num2_core::words2num(text, lang, to) {
+        Ok(v) => en_value_to_py(py, v),
+        Err(e) => Err(w2n_error_to_pyerr(py, e)),
+    }
+}
+
 /// `_rust.words2num_sentence(sentence, lang, to, kwargs)`.
 #[pyfunction]
 #[pyo3(signature = (sentence, lang="en", to="cardinal", kwargs=None))]
@@ -276,6 +303,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(en_to_ordinal, m)?)?;
     m.add_function(wrap_pyfunction!(en_to_year, m)?)?;
     m.add_function(wrap_pyfunction!(parse_number_string, m)?)?;
+    m.add_function(wrap_pyfunction!(words2num, m)?)?;
     m.add_function(wrap_pyfunction!(words2num_sentence, m)?)?;
     m.add_function(wrap_pyfunction!(pluralize, m)?)?;
     m.add_function(wrap_pyfunction!(auto_parse, m)?)?;

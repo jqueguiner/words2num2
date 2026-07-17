@@ -3,7 +3,7 @@ members = ["num2words2-core", "words2num2-core", "words2num2-py"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "LGPL-2.1-only"
 repository = "https://github.com/jqueguiner/words2num2"

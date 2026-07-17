@@ -22,6 +22,11 @@ pub mod w2n_formats;
 pub mod w2n_lang_en;
 pub mod w2n_sentence;
 
+/// The public single-token entry point (`words2num2.words2num`), re-exported at
+/// the crate root. Its dispatch — `_resolve_lang`, the en-vs-reverse-table
+/// choice, and the `to` mode selection — lives in [`w2n_sentence`].
+pub use w2n_sentence::words2num;
+
 /// Python's `Words2Num_Base.LOOKUP_RANGE`.
 const LOOKUP_LO: i64 = -1;
 const LOOKUP_HI: i64 = 10001;

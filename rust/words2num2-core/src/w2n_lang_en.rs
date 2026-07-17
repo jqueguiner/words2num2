@@ -457,6 +457,23 @@ impl PyDec {
         // BigDecimal's scale is the negated exponent.
         BigDecimal::new(signed, -self.exp)
     }
+
+    /// The inverse of [`to_bigdecimal`] — build a `PyDec` from a `BigDecimal`.
+    ///
+    /// `BigDecimal` has no signed zero, so a value it carries always maps to a
+    /// non-negative-zero `PyDec`; that is exactly right here, because the only
+    /// caller feeds it reverse-table results (`int`/`float` promoted through a
+    /// `Dec` arm), never a genuine grammar-produced signed zero.
+    pub fn from_bigdecimal(d: &BigDecimal) -> PyDec {
+        let (coeff, scale) = d.as_bigint_and_exponent();
+        let neg = coeff.sign() == Sign::Minus;
+        let coeff = if neg { -coeff } else { coeff };
+        PyDec {
+            neg,
+            coeff,
+            exp: -scale,
+        }
+    }
 }
 
 /// Port of `Decimal.__str__` (the spec's *to-scientific-string*) with the

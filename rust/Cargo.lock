@@ -94,6 +94,8 @@ dependencies = [
 [[package]]
 name = "num2words2-core"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebe0abf28292c2d0302b42402ecd56b8cda2487d0d764422c2ee754e5ca7f31d"
 dependencies = [
  "bigdecimal",
  "num-bigint",
@@ -103,9 +105,7 @@ dependencies = [
 
 [[package]]
 name = "num2words2-core"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebe0abf28292c2d0302b42402ecd56b8cda2487d0d764422c2ee754e5ca7f31d"
+version = "0.1.1"
 dependencies = [
  "bigdecimal",
  "num-bigint",
@@ -268,17 +268,17 @@ checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "words2num2-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bigdecimal",
  "num-bigint",
- "num2words2-core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num2words2-core 0.1.0",
  "unicode-normalization",
 ]
 
 [[package]]
 name = "words2num2-py"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bigdecimal",
  "num-bigint",

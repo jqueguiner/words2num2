@@ -779,6 +779,81 @@ fn call_words2num(text: &str, lang: &str) -> Result<W2nValue, W2nError> {
     converter_for(&resolved).to_cardinal(text)
 }
 
+/// Port of the public `words2num2.words2num(text, lang, to)` — the single-token
+/// entry point, dispatch and all.
+///
+/// ```python
+/// def words2num(text, lang="en", to="cardinal", **kwargs):
+///     resolved = _resolve_lang(lang)
+///     converter = CONVERTER_CLASSES[resolved]
+///     if to not in CONVERTER_TYPES:
+///         raise NotImplementedError("conversion type %r unsupported" % to)
+///     return getattr(converter, "to_{}".format(to))(text, **kwargs)
+/// ```
+///
+/// Returns the English grammar's [`crate::w2n_lang_en::W2nValue`] rather than
+/// this module's [`W2nValue`], so the `en` decimal path keeps its `PyDec`
+/// backing: a signed-zero decimal (`Decimal('-0.0')`) and the exact
+/// 28-significant-digit `str()` both survive, neither of which `BigDecimal` can
+/// carry. The 119 reverse-table locales only ever produce an `int` or `float`,
+/// so mapping their result back through [`sentence_to_en_value`] is lossless.
+pub fn words2num(
+    text: &str,
+    lang: &str,
+    to: &str,
+) -> Result<crate::w2n_lang_en::W2nValue, W2nError> {
+    let resolved = resolve_lang(lang)?;
+    let converter = converter_for(&resolved);
+
+    // `CONVERTER_TYPES` in `words2num2/__init__.py`. An unknown `to` is a
+    // `NotImplementedError`, distinct from the reverse table declining a word.
+    const CONVERTER_TYPES: [&str; 5] = ["cardinal", "ordinal", "ordinal_num", "year", "currency"];
+    if !CONVERTER_TYPES.contains(&to) {
+        return Err(W2nError::NotImplemented(format!(
+            "conversion type {} unsupported",
+            py_repr_str(to)
+        )));
+    }
+
+    // `getattr(converter, "to_{to}")(text)`. The English grammar path returns
+    // its native value directly; every other path is `int`/`float` and is
+    // promoted to the English value type.
+    match &converter {
+        Converter::En => match to {
+            // `Words2Num_Base.to_currency` == `self.to_cardinal` (polymorphic).
+            "cardinal" | "currency" => {
+                crate::en_to_cardinal(text).map_err(|e| W2nError::Words2Num(e.msg))
+            }
+            "ordinal" => crate::en_to_ordinal(text).map_err(|e| W2nError::Words2Num(e.msg)),
+            "year" => crate::en_to_year(text).map_err(|e| W2nError::Words2Num(e.msg)),
+            // `Words2Num_EN` inherits `Words2Num_Base.to_ordinal_num`.
+            _ => base_ordinal_num(text).map(sentence_to_en_value),
+        },
+        Converter::Table(_) => {
+            let v = match to {
+                // `Words2Num_Base.to_year`/`to_currency` == `self.to_cardinal`.
+                "cardinal" | "year" | "currency" => converter.to_cardinal(text),
+                "ordinal" => converter.to_ordinal(text),
+                _ => converter.to_ordinal_num(text),
+            }?;
+            Ok(sentence_to_en_value(v))
+        }
+    }
+}
+
+/// Promote a reverse-table / `ordinal_num` result into the English grammar's
+/// value type. Those paths never yield a `Decimal`, so the `Dec` arm is
+/// unreachable in practice; it is mapped losslessly (rather than panicked on —
+/// the crate builds `panic = "abort"`) via [`crate::w2n_lang_en::PyDec`].
+fn sentence_to_en_value(v: W2nValue) -> crate::w2n_lang_en::W2nValue {
+    use crate::w2n_lang_en::W2nValue as EnV;
+    match v {
+        W2nValue::Int(i) => EnV::Int(i),
+        W2nValue::Float(f) => EnV::Float(f),
+        W2nValue::Dec(d) => EnV::Dec(crate::w2n_lang_en::PyDec::from_bigdecimal(&d)),
+    }
+}
+
 // ===========================================================================
 // `words2num_sentence` / `convert_sentence` / `sentence_to_words`
 // ===========================================================================
