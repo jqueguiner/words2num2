@@ -1,20 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Tests for the locale dispatch."""
+"""Tests for the locale dispatch (now entirely in the Rust core)."""
 import pytest
 
-from words2num2 import CONVERTER_CLASSES, words2num
-
-
-def test_locale_count():
-    # 100+ locales registered.
-    assert len(CONVERTER_CLASSES) >= 100
-
-
-def test_aliases():
-    assert "jp" in CONVERTER_CLASSES
-    assert "cn" in CONVERTER_CLASSES
-    assert type(CONVERTER_CLASSES["jp"]) is type(CONVERTER_CLASSES["ja"])
-    assert type(CONVERTER_CLASSES["cn"]) is type(CONVERTER_CLASSES["zh_CN"])
+from words2num2 import words2num
 
 
 def test_unknown_lang_raises():
