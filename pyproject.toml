@@ -1,23 +1,31 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "words2num2"
-dynamic = ["version", "license"]
-description = "Inverse of num2words2: convert spoken-form numbers back to numeric values across 100+ languages."
+# Static base version. The release CI overrides it from the pushed git tag
+# (see .github/workflows/release.yml); bump here for local source builds.
+version = "0.3.0"
+license = "LGPL-2.1-only"
+license-files = ["COPYING"]
+description = "Rust-powered inverse of num2words2: parse spoken-form numbers back to numeric values across 100+ languages, optimized for ASR/LLM/speech."
 readme = "README.rst"
 requires-python = ">=3.10"
-dependencies = ["docopt>=0.6.2", "num2words2>=0.1.0.dev0"]
+# Self-contained: the num2words2 conversion engine is embedded in the compiled
+# core (num2words2-core), so there is no runtime dependency on the num2words2
+# package and no docopt (the CLI uses only the standard library).
+dependencies = []
 authors = [
-    {name = "Jean-Louis Queguiner", email = "jlqueguiner@gladia.io"}
+    {name = "Jean-Louis Queguiner", email = "jean-louis.queguiner@gmail.com"}
 ]
 maintainers = [
-    {name = "Jean-Louis Queguiner", email = "jlqueguiner@gladia.io"}
+    {name = "Jean-Louis Queguiner", email = "jean-louis.queguiner@gmail.com"}
 ]
-keywords = ["number", "word", "numbers", "words", "parse", "parser", "convert", "conversion",
-            "i18n", "localisation", "localization", "internationalisation",
-            "internationalization", "asr", "speech", "llm"]
+keywords = ["number", "word", "numbers", "words", "parse", "parser", "convert",
+            "conversion", "i18n", "localisation", "localization",
+            "internationalisation", "internationalization", "asr", "speech",
+            "llm", "rust"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -27,7 +35,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Rust",
     "Topic :: Software Development :: Internationalization",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Localization",
@@ -43,20 +51,18 @@ Repository = "https://github.com/jqueguiner/words2num2.git"
 [project.scripts]
 words2num2 = "words2num2.__main__:main"
 
-[tool.setuptools]
-packages = ["words2num2", "words2num2.converters"]
-
-[tool.setuptools.package-data]
-words2num2 = ["*.py"]
-
-[tool.setuptools_scm]
-write_to = "words2num2/_version.py"
-version_scheme = "release-branch-semver"
-local_scheme = "no-local-version"
-write_to_template = '''# Auto-generated version file
-__version__ = "{version}"
-__version_tuple__ = {version_tuple}
-'''
+# ---- maturin: mixed Rust/Python project -------------------------------------
+# The compiled engine lives in ./rust (vendored crates `words2num2-py`, lib
+# `_rust`, plus its `num2words2-core` dependency); the thin Python binder is
+# ./words2num2. maturin bundles both into a single per-platform wheel. The
+# wheel embeds num2words2-core natively — no lingua-rs models, so it stays
+# small (~4MB), and there is only one variant.
+[tool.maturin]
+manifest-path = "rust/words2num2-py/Cargo.toml"
+python-source = "."
+module-name = "words2num2._rust"
+features = ["pyo3/extension-module"]
+strip = true
 
 [tool.isort]
 profile = "black"
