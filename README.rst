@@ -143,6 +143,11 @@ Installation
 
     pip install words2num2
 
+**cargo** (Rust) — the compiled core is published on crates.io as
+`words2num2-core <https://crates.io/crates/words2num2-core>`_::
+
+    cargo add words2num2-core
+
 That's it — the wheel bundles the Python binder and the compiled Rust
 extension, and ``words2num2`` has **no runtime dependencies** (the num2words2
 conversion engine is compiled in, so you do *not* need the num2words2 package).
