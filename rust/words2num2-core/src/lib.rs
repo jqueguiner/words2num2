@@ -194,30 +194,51 @@ fn scale_cache() -> &'static RwLock<HashMap<String, Vec<(String, i64)>>> {
     S.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Scale words for `lang`, biggest magnitude first. Derived by rendering
-/// 10^9/10^6/10^3 via num2words and taking the last token of each (fr → "milliard",
-/// "million", "mille"). A magnitude whose render is a single glued token that
-/// equals a smaller one, or that collides, is skipped.
+/// Scale words for `lang`, biggest magnitude first. Derived by rendering the
+/// SINGULAR and PLURAL of 10^6 and 10^3 (n and 2n) via num2words and taking the
+/// last token of each: fr → {"millions"/"million" → 10^6, "mille" → 10^3}. Only
+/// 10^3 and 10^6 are probed — a language's 10^9 is often a *compound* of these
+/// ("mil millones", "mil milhões") and the recursion composes it from the parts,
+/// so probing 10^9 directly would mis-map its last token ("millones") to 10^9.
 fn scale_words(lang: &str) -> Vec<(String, i64)> {
     if let Some(v) = scale_cache().read().unwrap().get(lang) {
         return v.clone();
     }
     let mut out: Vec<(String, i64)> = Vec::new();
     if let Some(l) = num2words2_core::get_lang_by_key(lang) {
-        for mag in [1_000_000_000i64, 1_000_000, 1_000] {
-            if let Ok(words) = l.to_cardinal(&BigInt::from(mag)) {
-                let norm = normalize(&words);
-                if let Some(last) = norm.split_whitespace().last() {
-                    let w = last.to_string();
-                    // Le mot d'échelle doit être un token DISTINCT (pas déjà pris,
-                    // ≥3 lettres) — évite les faux positifs sur les langues collées.
-                    if w.len() >= 3 && !out.iter().any(|(x, _)| *x == w) {
-                        out.push((w, mag));
+        // (magnitude, [singulier, pluriel]) — le pluriel capte « millions » vs
+        // « million » (num2words rend 2×10^6 au pluriel).
+        // Échantillons n, 2n, 5n : capte les formes grammaticales du mot
+        // d'échelle — singulier (« mille »/« tysiąc »), petit pluriel (« millions »
+        // /« tysiące ») ET pluriel génitif slave 5+ (« tysięcy »/« тысяч »).
+        // Ordre PETIT → GRAND : le garde anti-collision fixe alors chaque token à
+        // sa PLUS PETITE magnitude. Essentiel en échelle longue (es « mil
+        // millones » = 10^9 réutilise « millones » = 10^6) : « millones » reste à
+        // 10^6, et 10^9 se compose par récursion (mil × millones).
+        for (mag, samples) in [
+            (1_000i64, [1_000i64, 2_000i64, 5_000i64]),
+            (1_000_000i64, [1_000_000i64, 2_000_000i64, 5_000_000i64]),
+            (1_000_000_000i64, [1_000_000_000i64, 2_000_000_000i64, 5_000_000_000i64]),
+        ] {
+            for s in samples {
+                if let Ok(words) = l.to_cardinal(&BigInt::from(s)) {
+                    let norm = normalize(&words);
+                    if let Some(last) = norm.split_whitespace().last() {
+                        let w = last.to_string();
+                        // Token d'échelle DISTINCT, ≥3 lettres, non numérique.
+                        if w.len() >= 3
+                            && !w.chars().any(|c| c.is_ascii_digit())
+                            && !out.iter().any(|(x, _)| *x == w)
+                        {
+                            out.push((w, mag));
+                        }
                     }
                 }
             }
         }
     }
+    // Plus grande magnitude d'abord : « million » se scinde avant « mille ».
+    out.sort_by(|a, b| b.1.cmp(&a.1));
     scale_cache()
         .write()
         .unwrap()
@@ -230,6 +251,37 @@ fn lookup_plain(lang: &str, text: &str) -> Option<i64> {
     lookup(lang, text, false, &[]).ok().flatten()
 }
 
+/// Connector/particle words that may sit between number groups and must be
+/// stripped from a fragment's edges before lookup: es « y », pt/it « e »,
+/// ro « de » (« nouă **de** mii »), etc. Keyed by language prefix.
+fn connector_words(lang: &str) -> &'static [&'static str] {
+    let base = lang.split(&['_', '-'][..]).next().unwrap_or(lang);
+    match base {
+        "es" | "gl" => &["y", "e"],
+        "pt" | "it" => &["e"],
+        "fr" => &["et"],
+        "ca" => &["i"],
+        "de" => &["und"],
+        "nl" | "af" => &["en"],
+        "ro" => &["si", "și", "de"],
+        "pl" => &["i"],
+        "en" => &["and"],
+        _ => &[],
+    }
+}
+
+/// Strip leading/trailing connector tokens from a fragment.
+fn trim_connectors<'a>(s: &'a str, conns: &[&str]) -> String {
+    let mut toks: Vec<&str> = s.split_whitespace().collect();
+    while toks.first().is_some_and(|t| conns.contains(t)) {
+        toks.remove(0);
+    }
+    while toks.last().is_some_and(|t| conns.contains(t)) {
+        toks.pop();
+    }
+    toks.join(" ")
+}
+
 /// Compose a cardinal that the reverse table cannot hold on its own
 /// (`> 10001`), e.g. "soixante-neuf mille huit" → 69008, "soixante-quinze mille
 /// treize" → 75013. `None` if any fragment is not a known number word.
@@ -237,11 +289,12 @@ pub fn parse_scaled(lang: &str, text: &str) -> Option<i64> {
     if !supported_langs().contains(&lang) {
         return None;
     }
-    parse_scaled_inner(lang, &normalize(text), &scale_words(lang))
+    parse_scaled_inner(lang, &normalize(text), &scale_words(lang), connector_words(lang))
 }
 
-fn parse_scaled_inner(lang: &str, text: &str, scales: &[(String, i64)]) -> Option<i64> {
-    let text = text.trim();
+fn parse_scaled_inner(lang: &str, text: &str, scales: &[(String, i64)], conns: &[&str]) -> Option<i64> {
+    let text = trim_connectors(text.trim(), conns);
+    let text = text.as_str();
     if text.is_empty() {
         return None;
     }
@@ -256,15 +309,15 @@ fn parse_scaled_inner(lang: &str, text: &str, scales: &[(String, i64)]) -> Optio
             let left = toks[..pos].join(" ");
             let right = toks[pos + 1..].join(" ");
             // « mille » nu (pas de multiplicateur à gauche) = 1×mille.
-            let l = if left.trim().is_empty() {
+            let l = if trim_connectors(left.trim(), conns).is_empty() {
                 1
             } else {
-                parse_scaled_inner(lang, &left, scales)?
+                parse_scaled_inner(lang, &left, scales, conns)?
             };
-            let r = if right.trim().is_empty() {
+            let r = if trim_connectors(right.trim(), conns).is_empty() {
                 0
             } else {
-                parse_scaled_inner(lang, &right, scales)?
+                parse_scaled_inner(lang, &right, scales, conns)?
             };
             return Some(l * mag + r);
         }
@@ -340,6 +393,15 @@ mod tests {
         assert_eq!(parse_scaled("fr", "mille treize"), Some(1013));
         // Non-number fragment → None (walker keeps its shorter parse).
         assert_eq!(parse_scaled("fr", "mille lyon"), None);
+        // Plural scale words, connectors, long-scale billions, Slavic genitive
+        // plural — round-trips that the flat reverse table could never hold.
+        assert_eq!(parse_scaled("fr", "un milliard"), Some(1_000_000_000));
+        assert_eq!(parse_scaled("es", "sesenta y nueve mil ocho"), Some(69008));
+        assert_eq!(parse_scaled("es", "dos millones"), Some(2_000_000)); // not 2e9
+        assert_eq!(parse_scaled("es", "mil millones"), Some(1_000_000_000));
+        assert_eq!(parse_scaled("pt", "sessenta e nove mil e oito"), Some(69008));
+        assert_eq!(parse_scaled("pl", "sześćdziesiąt dziewięć tysięcy osiem"), Some(69008));
+        assert_eq!(parse_scaled("ru", "шестьдесят девять тысяч восемь"), Some(69008));
         // Sentence walk emits the composed value inline.
         assert_eq!(
             w2n_sentence::words2num_sentence(
