@@ -618,6 +618,49 @@ impl Converter {
         self.to_cardinal(text)
     }
 
+    /// Digit-sequence mode: spoken digit-by-digit spellings ("two seven five"
+    /// → 275, "sieben acht" → 78) are concatenated, not summed. The cardinal
+    /// grammar mis-parses these (e.g. "two seven five" → 14); dictated house
+    /// numbers, zip codes and phone-style runs are commonly spelled this way.
+    ///
+    /// Every whitespace token of the run must be a single-digit number word
+    /// (0-9) in the target language; any non-digit (or 10+) makes this decline
+    /// with `Err`, so the sentence walker falls back to its longest cardinal
+    /// parse and never turns a real cardinal into a digit string.
+    ///
+    /// Limitation: the sentence value type is numeric, so a leading zero
+    /// ("zero one" → 01) collapses to its integer (1). Runs whose concatenation
+    /// overflows `i64` also decline (left as words).
+    fn to_digits(&self, text: &str) -> Result<W2nValue, W2nError> {
+        let dehyphened = text.replace('-', " ");
+        let toks = py_split_whitespace(&dehyphened);
+        if toks.is_empty() {
+            return Err(W2nError::Words2Num("empty digit run".to_string()));
+        }
+        let mut s = String::with_capacity(toks.len());
+        for t in &toks {
+            match self.to_cardinal(t)? {
+                // A single decimal digit stringifies to exactly one ASCII digit
+                // (0-9); anything else (negatives, 10+, floats) declines.
+                W2nValue::Int(d) => {
+                    let ds = d.to_string();
+                    let b = ds.as_bytes();
+                    if b.len() == 1 && b[0].is_ascii_digit() {
+                        s.push(b[0] as char);
+                    } else {
+                        return Err(W2nError::Words2Num("not a single digit".to_string()));
+                    }
+                }
+                _ => return Err(W2nError::Words2Num("not a single digit".to_string())),
+            }
+        }
+        // BigInt parse — no overflow. (Leading zeros collapse numerically.)
+        let n: BigInt = s
+            .parse()
+            .map_err(|_| W2nError::Words2Num("bad digit run".to_string()))?;
+        Ok(W2nValue::Int(n))
+    }
+
     /// Dispatch `getattr(converter, "to_{to}")(token, **kwargs)`.
     ///
     /// `has_kwargs` models the sentence walker passing `**kwargs` through: the
@@ -638,6 +681,7 @@ impl Converter {
             "year" => self.to_year(text),
             "ordinal_num" => self.to_ordinal_num(text),
             "currency" => self.to_currency(text),
+            "digits" => self.to_digits(text),
             // AttributeError: converter has no to_<to>.
             _ => Err(W2nError::NotImplemented(format!(
                 "'Words2Num' object has no attribute 'to_{}'",
@@ -807,7 +851,8 @@ pub fn words2num(
 
     // `CONVERTER_TYPES` in `words2num2/__init__.py`. An unknown `to` is a
     // `NotImplementedError`, distinct from the reverse table declining a word.
-    const CONVERTER_TYPES: [&str; 5] = ["cardinal", "ordinal", "ordinal_num", "year", "currency"];
+    const CONVERTER_TYPES: [&str; 6] =
+        ["cardinal", "ordinal", "ordinal_num", "year", "currency", "digits"];
     if !CONVERTER_TYPES.contains(&to) {
         return Err(W2nError::NotImplemented(format!(
             "conversion type {} unsupported",
@@ -826,6 +871,7 @@ pub fn words2num(
             }
             "ordinal" => crate::en_to_ordinal(text).map_err(|e| W2nError::Words2Num(e.msg)),
             "year" => crate::en_to_year(text).map_err(|e| W2nError::Words2Num(e.msg)),
+            "digits" => converter.to_digits(text).map(sentence_to_en_value),
             // `Words2Num_EN` inherits `Words2Num_Base.to_ordinal_num`.
             _ => base_ordinal_num(text).map(sentence_to_en_value),
         },
@@ -834,6 +880,7 @@ pub fn words2num(
                 // `Words2Num_Base.to_year`/`to_currency` == `self.to_cardinal`.
                 "cardinal" | "year" | "currency" => converter.to_cardinal(text),
                 "ordinal" => converter.to_ordinal(text),
+                "digits" => converter.to_digits(text),
                 _ => converter.to_ordinal_num(text),
             }?;
             Ok(sentence_to_en_value(v))
@@ -2332,5 +2379,33 @@ mod tests {
         assert_eq!(pluralize(Some("dollar"), &int(1)).as_deref(), Some("dollar"));
         assert_eq!(pluralize(Some("foot"), &int(5)).as_deref(), Some("feet"));
         assert_eq!(pluralize(Some("yen"), &int(5)).as_deref(), Some("yen"));
+    }
+}
+
+#[cfg(test)]
+mod digits_tests {
+    use super::words2num_sentence as s;
+    #[test]
+    fn digit_sequences_concatenate_not_sum() {
+        // Spoken digit-by-digit (house numbers, zips, phone-style) -> concat.
+        assert_eq!(s("Two seven five", "en", "digits", false).unwrap(), "275");
+        assert_eq!(
+            s("Seven Eight Three One Eight Avenue", "en", "digits", false).unwrap(),
+            "78318 Avenue"
+        );
+        assert_eq!(
+            s("one eight nine zero zero one one", "en", "digits", false).unwrap(),
+            "1890011"
+        );
+        // Multilingual via the reverse tables.
+        assert_eq!(s("sieben acht drei", "de", "digits", false).unwrap(), "783");
+        // Cardinals are NOT digit runs -> declined, left verbatim in digits mode
+        // (handled by the cardinal converter instead), and never mis-summed.
+        assert_eq!(
+            s("sixty-one hundred Main Street", "en", "digits", false).unwrap(),
+            "sixty-one hundred Main Street"
+        );
+        // The old cardinal behaviour that motivated this: "two seven five" -> 14.
+        assert_eq!(s("Two seven five", "en", "cardinal", false).unwrap(), "14");
     }
 }
