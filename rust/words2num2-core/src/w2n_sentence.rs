@@ -944,6 +944,26 @@ fn is_candidate(converter: &Converter, token: &str, includable: &[&str]) -> bool
 /// and therefore runs with an empty includable set.
 const INCLUDABLE_EN: [&str; 7] = ["and", "point", "dot", "minus", "negative", "a", "an"];
 
+/// Connector words allowed INSIDE a number run for non-English locales — the
+/// analogue of English "and". Without them the walker breaks a run at the
+/// connector ("sesenta **y** nueve mil ocho" stopped at "sesenta"), so
+/// composed cardinals above the reverse table never reached the parser. Keyed
+/// by resolved language prefix; empty for locales that don't join with a word.
+fn includable_for(resolved: &str) -> &'static [&'static str] {
+    let base = resolved.split(&['_', '-'][..]).next().unwrap_or(resolved);
+    match base {
+        "es" | "gl" => &["y", "e"],
+        "pt" | "it" => &["e"],
+        "fr" => &["et"],
+        "ca" => &["i"],
+        "de" => &["und"],
+        "nl" | "af" => &["en"],
+        "ro" => &["si", "și"],
+        "pl" => &["i"],
+        _ => &[],
+    }
+}
+
 /// Port of `words2num2.words2num_sentence` → `SentenceConverter.convert`.
 ///
 /// Walks the sentence and, at each position that opens with a real number
@@ -961,7 +981,11 @@ pub fn words2num_sentence(
 ) -> Result<String, W2nError> {
     let resolved = resolve_lang(lang)?;
     let converter = converter_for(&resolved);
-    let includable: &[&str] = if resolved == "en" { &INCLUDABLE_EN } else { &[] };
+    let includable: &[&str] = if resolved == "en" {
+        &INCLUDABLE_EN
+    } else {
+        includable_for(&resolved)
+    };
 
     let parts = tokenize(sentence);
     let n = parts.len();
