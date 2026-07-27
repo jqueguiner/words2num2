@@ -714,6 +714,13 @@ fn base_convert(lang: &str, text: &str, ordinal: bool) -> Result<W2nValue, W2nEr
         if let Ok(Some(v)) = crate::lookup(lang, text, ordinal, &neg) {
             return Ok(W2nValue::Int(BigInt::from(v)));
         }
+        // Composition multi-échelle pour les valeurs hors table (> 10001) :
+        // « soixante-neuf mille huit » → 69008. Uniquement en cardinal.
+        if !ordinal {
+            if let Some(v) = crate::parse_scaled(lang, text) {
+                return Ok(W2nValue::Int(BigInt::from(v)));
+            }
+        }
     }
     parse_literal(text)
 }

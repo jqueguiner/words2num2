@@ -174,6 +174,104 @@ pub fn supported_langs() -> Vec<&'static str> {
     num2words2_core::supported_lang_keys()
 }
 
+// ---------------------------------------------------------------------------
+// Multi-scale cardinal composition (values above the LOOKUP_RANGE table)
+// ---------------------------------------------------------------------------
+//
+// The reverse table only covers -1..10001, so a spoken number like
+// "soixante-neuf mille huit" (69008) has no whole-string entry and the sentence
+// walker was left emitting the fragments "69 1000 8". `parse_scaled` restores
+// the arithmetic num2words never inverted: it splits on a language's scale
+// words (mille=10^3, million=10^6, milliard=10^9) and composes
+// `left * scale + right`, recursively. Space-separated languages (fr/es/pt/…)
+// gain full thousands/millions support; agglutinative ones (de/nl, where the
+// scale is glued into one token) find no split word and fall back to the table
+// unchanged — so this never regresses them.
+
+/// Cache of `(scale_word_normalized -> magnitude)` per language, biggest first.
+fn scale_cache() -> &'static RwLock<HashMap<String, Vec<(String, i64)>>> {
+    static S: OnceLock<RwLock<HashMap<String, Vec<(String, i64)>>>> = OnceLock::new();
+    S.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Scale words for `lang`, biggest magnitude first. Derived by rendering
+/// 10^9/10^6/10^3 via num2words and taking the last token of each (fr → "milliard",
+/// "million", "mille"). A magnitude whose render is a single glued token that
+/// equals a smaller one, or that collides, is skipped.
+fn scale_words(lang: &str) -> Vec<(String, i64)> {
+    if let Some(v) = scale_cache().read().unwrap().get(lang) {
+        return v.clone();
+    }
+    let mut out: Vec<(String, i64)> = Vec::new();
+    if let Some(l) = num2words2_core::get_lang_by_key(lang) {
+        for mag in [1_000_000_000i64, 1_000_000, 1_000] {
+            if let Ok(words) = l.to_cardinal(&BigInt::from(mag)) {
+                let norm = normalize(&words);
+                if let Some(last) = norm.split_whitespace().last() {
+                    let w = last.to_string();
+                    // Le mot d'échelle doit être un token DISTINCT (pas déjà pris,
+                    // ≥3 lettres) — évite les faux positifs sur les langues collées.
+                    if w.len() >= 3 && !out.iter().any(|(x, _)| *x == w) {
+                        out.push((w, mag));
+                    }
+                }
+            }
+        }
+    }
+    scale_cache()
+        .write()
+        .unwrap()
+        .insert(lang.to_string(), out.clone());
+    out
+}
+
+/// Table hit for a fragment (no sign handling), i.e. a number ≤ 10001.
+fn lookup_plain(lang: &str, text: &str) -> Option<i64> {
+    lookup(lang, text, false, &[]).ok().flatten()
+}
+
+/// Compose a cardinal that the reverse table cannot hold on its own
+/// (`> 10001`), e.g. "soixante-neuf mille huit" → 69008, "soixante-quinze mille
+/// treize" → 75013. `None` if any fragment is not a known number word.
+pub fn parse_scaled(lang: &str, text: &str) -> Option<i64> {
+    if !supported_langs().contains(&lang) {
+        return None;
+    }
+    parse_scaled_inner(lang, &normalize(text), &scale_words(lang))
+}
+
+fn parse_scaled_inner(lang: &str, text: &str, scales: &[(String, i64)]) -> Option<i64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // Fragment directly in the table (≤10001) — base case.
+    if let Some(v) = lookup_plain(lang, text) {
+        return Some(v);
+    }
+    // Split on the largest scale word present (whole-token match).
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    for (word, mag) in scales {
+        if let Some(pos) = toks.iter().position(|t| t == word) {
+            let left = toks[..pos].join(" ");
+            let right = toks[pos + 1..].join(" ");
+            // « mille » nu (pas de multiplicateur à gauche) = 1×mille.
+            let l = if left.trim().is_empty() {
+                1
+            } else {
+                parse_scaled_inner(lang, &left, scales)?
+            };
+            let r = if right.trim().is_empty() {
+                0
+            } else {
+                parse_scaled_inner(lang, &right, scales)?
+            };
+            return Some(l * mag + r);
+        }
+    }
+    None
+}
+
 /// Port of `_rust.parse_int` — a plain `int(s)` for a signed ASCII integer.
 pub fn parse_int(s: &str) -> Result<i64, std::num::ParseIntError> {
     s.parse::<i64>()
@@ -230,6 +328,29 @@ mod tests {
             w2n_lang_en::W2nValue::Int(BigInt::from(1999))
         );
         assert!(en_to_cardinal("forty zoot").is_err());
+    }
+
+    #[test]
+    fn scaled_cardinals_above_table() {
+        // Reverse table only holds -1..10001; these compose via scale words.
+        assert_eq!(parse_scaled("fr", "soixante-neuf mille huit"), Some(69008));
+        assert_eq!(parse_scaled("fr", "cinquante-neuf mille"), Some(59000));
+        assert_eq!(parse_scaled("fr", "soixante-quinze mille treize"), Some(75013));
+        assert_eq!(parse_scaled("fr", "quatre-vingt-douze mille cent"), Some(92100));
+        assert_eq!(parse_scaled("fr", "mille treize"), Some(1013));
+        // Non-number fragment → None (walker keeps its shorter parse).
+        assert_eq!(parse_scaled("fr", "mille lyon"), None);
+        // Sentence walk emits the composed value inline.
+        assert_eq!(
+            w2n_sentence::words2num_sentence(
+                "quarante-deux rue des freres lumiere soixante-neuf mille huit lyon",
+                "fr",
+                "cardinal",
+                false,
+            )
+            .unwrap(),
+            "42 rue des freres lumiere 69008 lyon"
+        );
     }
 
     #[test]
