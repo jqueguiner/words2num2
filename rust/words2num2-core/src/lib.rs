@@ -322,12 +322,165 @@ fn parse_scaled_inner(lang: &str, text: &str, scales: &[(String, i64)], conns: &
             return Some(l * mag + r);
         }
     }
+    // Additive hundreds glued into one word ("novecento" = 900) followed by a
+    // sub-hundred remainder ("ottantotto" = 88): 900 + 88 = 988. num2words
+    // elides the vowel at the join ("novecentottantotto"), so the de-spaced
+    // string is not the canonical spelling and only this additive split
+    // recovers it. Fires under a scale too — "mille novecento ottantotto"
+    // splits on "mille" then composes 900 + 88 here. Guarded so it never
+    // fabricates: the left part must be a positive whole hundred, the right a
+    // genuine sub-hundred, both real table words.
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    for i in 1..toks.len() {
+        let left = trim_connectors(&toks[..i].join(" "), conns);
+        let right = trim_connectors(&toks[i..].join(" "), conns);
+        if let (Some(l), Some(r)) = (lookup_plain(lang, &left), lookup_plain(lang, &right)) {
+            if l >= 100 && l % 100 == 0 && (1..100).contains(&r) {
+                return Some(l + r);
+            }
+        }
+    }
     None
 }
 
 /// Port of `_rust.parse_int` — a plain `int(s)` for a signed ASCII integer.
 pub fn parse_int(s: &str) -> Result<i64, std::num::ParseIntError> {
     s.parse::<i64>()
+}
+
+// ---------------------------------------------------------------------------
+// Spoken "year" forms (below the LOOKUP_RANGE table but not canonical)
+// ---------------------------------------------------------------------------
+//
+// num2words only ever renders ONE spelling per value, so the reverse table
+// holds just that canonical form. But speech routinely uses the "year" reading
+// — two 2-digit groups ("neunzehn neunundneunzig" = 19·100+99 = 1999), an
+// explicit hundred ("dix-neuf cent quatre-vingt-dix" = 19·100+90 = 1990), or a
+// hundred glued into one token ("nittonhundranittiosju" = 19·100+97 = 1997).
+// None of those are the canonical render, so the table misses and the caller
+// used to raise `cannot parse`. `parse_year` recovers them from the same
+// reverse-table primitive, so it needs no per-language grammar.
+
+/// Cache of the derived "hundred" morpheme per language (`None` when the
+/// language has no regular one, e.g. es cien/-cientos).
+fn hundred_cache() -> &'static RwLock<HashMap<String, Option<String>>> {
+    static H: OnceLock<RwLock<HashMap<String, Option<String>>>> = OnceLock::new();
+    H.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Longest common suffix of two ASCII-ish strings, by `char`.
+fn common_suffix(a: &str, b: &str) -> String {
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let mut k = 0;
+    while k < ac.len() && k < bc.len() && ac[ac.len() - 1 - k] == bc[bc.len() - 1 - k] {
+        k += 1;
+    }
+    ac[ac.len() - k..].iter().collect()
+}
+
+/// Derive the language's "hundred" morpheme (fr "cent", de "hundert",
+/// nl "honderd", sv "hundra", it "cento") by rendering 200/300/900, de-spacing,
+/// dropping a trailing plural "s", and taking the longest common alphabetic
+/// suffix (>=3 chars). Returns `None` for irregular hundreds (es cien/-cientos),
+/// where `parse_year` simply skips the hundred split.
+fn hundred_word(lang: &str) -> Option<String> {
+    if let Some(v) = hundred_cache().read().unwrap().get(lang) {
+        return v.clone();
+    }
+    let out = (|| {
+        let l = num2words2_core::get_lang_by_key(lang)?;
+        let mut forms: Vec<String> = Vec::new();
+        // Probe every hundred 200..=900: the letter BEFORE the hundred morpheme
+        // then varies across units (it quattr-o/se-i/nov-e, fr deu-x/si-x/hui-t),
+        // so the longest common suffix isolates the morpheme itself ("cento",
+        // "cent") rather than a unit's trailing vowel.
+        for n in (200i64..=900).step_by(100) {
+            let w = l.to_cardinal(&BigInt::from(n)).ok()?;
+            let mut s: String = normalize(&w).split_whitespace().collect();
+            if s.ends_with('s') {
+                s.pop();
+            }
+            forms.push(s);
+        }
+        let mut suf = forms[0].clone();
+        for f in &forms[1..] {
+            suf = common_suffix(&suf, f);
+        }
+        // Keep only the trailing alphabetic run (drop any leading unit letters).
+        let tail: String = {
+            let mut rev: Vec<char> = suf.chars().rev().take_while(|c| c.is_alphabetic()).collect();
+            rev.reverse();
+            rev.into_iter().collect()
+        };
+        (tail.chars().count() >= 3).then_some(tail)
+    })();
+    hundred_cache()
+        .write()
+        .unwrap()
+        .insert(lang.to_string(), out.clone());
+    out
+}
+
+/// Recover a spoken "year" reading that is not num2words' canonical spelling:
+/// `L <hundred> R` (explicit or glued) → `L*100 + R`, or two 2-digit groups
+/// `a b` → `a*100 + b`. All parts are resolved through the reverse table, so no
+/// language-specific grammar is needed. Intended as a LAST-resort fallback,
+/// after the whole-string table hit and [`parse_scaled`] have both declined —
+/// so a canonical number (`vingt trois` = 23) never reaches here.
+pub fn parse_year(lang: &str, text: &str) -> Option<i64> {
+    if !supported_langs().contains(&lang) {
+        return None;
+    }
+    let norm = normalize(text);
+    let toks: Vec<&str> = norm.split_whitespace().collect();
+    if toks.is_empty() {
+        return None;
+    }
+    let hw = hundred_word(lang);
+
+    // (B) explicit hundred token: LEFT <hundred> RIGHT -> LEFT*100 + RIGHT.
+    if let Some(ref h) = hw {
+        if let Some(pos) = toks.iter().position(|t| *t == h.as_str()) {
+            let left = toks[..pos].join(" ");
+            let right = toks[pos + 1..].join(" ");
+            let high = if left.is_empty() { Some(1) } else { lookup_plain(lang, &left) };
+            let low = if right.is_empty() { Some(0) } else { lookup_plain(lang, &right) };
+            if let (Some(h100), Some(l)) = (high, low) {
+                if (1..=99).contains(&h100) && (0..=99).contains(&l) {
+                    return Some(h100 * 100 + l);
+                }
+            }
+        }
+    }
+    // (C) one glued token carrying the hundred morpheme: PRE<hundred>SUF.
+    if toks.len() == 1 {
+        if let Some(ref h) = hw {
+            let t = toks[0];
+            if let Some(pos) = t.find(h.as_str()) {
+                let pre = &t[..pos];
+                let suf = &t[pos + h.len()..];
+                if !(pre.is_empty() && suf.is_empty()) {
+                    let high = if pre.is_empty() { Some(1) } else { lookup_plain(lang, pre) };
+                    let low = if suf.is_empty() { Some(0) } else { lookup_plain(lang, suf) };
+                    if let (Some(h100), Some(l)) = (high, low) {
+                        if (1..=99).contains(&h100) && (0..=99).contains(&l) {
+                            return Some(h100 * 100 + l);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // (A) two spoken 2-digit groups ("nineteen ninety-nine") -> a*100 + b.
+    if toks.len() == 2 {
+        if let (Some(a), Some(b)) = (lookup_plain(lang, toks[0]), lookup_plain(lang, toks[1])) {
+            if (10..=99).contains(&a) && (0..=99).contains(&b) {
+                return Some(a * 100 + b);
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -421,5 +574,47 @@ mod tests {
         assert!(langs.contains(&"en"));
         assert!(langs.contains(&"fr"));
         assert!(langs.len() >= 100);
+    }
+
+    #[test]
+    fn hundred_morpheme_is_derived() {
+        assert_eq!(hundred_word("fr").as_deref(), Some("cent"));
+        assert_eq!(hundred_word("it").as_deref(), Some("cento"));
+        assert_eq!(hundred_word("de").as_deref(), Some("hundert"));
+        assert_eq!(hundred_word("nl").as_deref(), Some("honderd"));
+        assert_eq!(hundred_word("sv").as_deref(), Some("hundra"));
+    }
+
+    #[test]
+    fn spoken_year_forms() {
+        // Two 2-digit groups ("nineteen ninety-nine").
+        assert_eq!(parse_year("de", "neunzehn neunundneunzig"), Some(1999));
+        assert_eq!(parse_year("nl", "negentien zevenennegentig"), Some(1997));
+        // Explicit hundred, spaced (fr "dix-neuf cent ...", hyphens → spaces).
+        assert_eq!(parse_year("fr", "dix neuf cent quatre vingt dix"), Some(1990));
+        assert_eq!(parse_year("fr", "dix-neuf cent quatre-vingt-dix"), Some(1990));
+        // Hundred glued into one token.
+        assert_eq!(parse_year("sv", "nittonhundranittiosju"), Some(1997));
+        assert_eq!(parse_year("nl", "negentienhonderdzevenennegentig"), Some(1997));
+        // A plain canonical two-token number must NOT be mis-read as a year:
+        // "vingt trois" (23) is a table hit, so the fallback never sees it —
+        // but even directly, 20·100+3 is refused because 23 resolves first via
+        // the caller; here we assert the guard shape holds for a non-century.
+        assert_eq!(parse_year("fr", "trois quatre"), None); // 3,4 not in 10..99
+    }
+
+    #[test]
+    fn year_forms_via_public_entry() {
+        use w2n_lang_en::W2nValue;
+        use w2n_sentence::words2num;
+        let int = |n: i64| W2nValue::Int(BigInt::from(n));
+        // End-to-end through the same path Python's `words2num` takes.
+        assert_eq!(words2num("neunzehn neunundneunzig", "de", "cardinal").unwrap(), int(1999));
+        assert_eq!(words2num("nittonhundranittiosju", "sv", "cardinal").unwrap(), int(1997));
+        // De-spaced glued canonical ("mille novecento ottantotto" → 1988).
+        assert_eq!(words2num("mille novecento ottantotto", "it", "cardinal").unwrap(), int(1988));
+        // Regression: a canonical number is unaffected.
+        assert_eq!(words2num("deux mille dix", "fr", "cardinal").unwrap(), int(2010));
+        assert_eq!(words2num("vingt trois", "fr", "cardinal").unwrap(), int(23));
     }
 }
