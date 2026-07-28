@@ -720,6 +720,23 @@ fn base_convert(lang: &str, text: &str, ordinal: bool) -> Result<W2nValue, W2nEr
             if let Some(v) = crate::parse_scaled(lang, text) {
                 return Ok(W2nValue::Int(BigInt::from(v)));
             }
+            // Compound spoken as separate tokens where num2words renders it
+            // glued: "mille novecento ottantotto" → the canonical
+            // "millenovecentottantotto". Only when de-spacing actually changes
+            // the string (multi-token input), and only if that glued form is a
+            // genuine table hit — so it never invents a value.
+            let norm = crate::normalize(text);
+            let despaced: String = norm.split_whitespace().collect();
+            if despaced != norm {
+                if let Ok(Some(v)) = crate::lookup(lang, &despaced, false, &neg) {
+                    return Ok(W2nValue::Int(BigInt::from(v)));
+                }
+            }
+            // Spoken "year" readings (two 2-digit groups, or an explicit/glued
+            // hundred) that are not num2words' canonical spelling.
+            if let Some(v) = crate::parse_year(lang, text) {
+                return Ok(W2nValue::Int(BigInt::from(v)));
+            }
         }
     }
     parse_literal(text)
